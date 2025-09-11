@@ -12,5 +12,7 @@ task default: %i[test standard]
 require "reissue/gem"
 
 Reissue::Task.create :reissue do |task|
-  task.version_file = "lib/GEM_NAME/version.rb"
+  task.version_file = "lib/circulator/version.rb"
+  task.changelog_file = "CHANGELOG.md"
+  task.version_limit = 1
 end
