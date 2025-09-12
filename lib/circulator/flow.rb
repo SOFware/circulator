@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "diverter"
-
 module Circulator
   class Flow
     def initialize(klass, attribute_name, states = Set.new, &block)

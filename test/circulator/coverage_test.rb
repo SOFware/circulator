@@ -7,7 +7,7 @@ class CirculatorCoverageTest < Minitest::Test
       it "raises ArgumentError when method is already defined" do
         assert_raises(ArgumentError) do
           test_class = Class.new do
-            extend Circulator::Diverter
+            extend Circulator
 
             attr_accessor :status
           end
@@ -32,7 +32,7 @@ class CirculatorCoverageTest < Minitest::Test
     describe "Anonymous class handling" do
       it "handles anonymous classes in model_key" do
         anonymous_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status
         end
@@ -40,7 +40,7 @@ class CirculatorCoverageTest < Minitest::Test
         anonymous_object = anonymous_class.new
 
         # The model_key method should handle anonymous classes
-        key = Circulator::Diverter.model_key(anonymous_object)
+        key = Circulator.model_key(anonymous_object)
         assert_match(/^anonymous_/, key)
       end
 
@@ -48,7 +48,7 @@ class CirculatorCoverageTest < Minitest::Test
         # Test the "#<Class:" branch directly
         anonymous_string = "#<Class:0x00007f8b8c0a5b30>"
         puts "Testing anonymous string: #{anonymous_string}" if ENV["DEBUG"]
-        key = Circulator::Diverter.model_key(anonymous_string)
+        key = Circulator.model_key(anonymous_string)
         puts "Result: #{key}" if ENV["DEBUG"]
         assert_equal "anonymous_00007f8b8c0a5b30", key
       end
@@ -56,14 +56,14 @@ class CirculatorCoverageTest < Minitest::Test
       it "handles regular class objects" do
         # Test passing an actual object (not a string)
         regular_object = Sampler.new
-        key = Circulator::Diverter.model_key(regular_object)
+        key = Circulator.model_key(regular_object)
         assert_equal "Sampler", key
       end
 
       it "handles namespaced class objects" do
         # Test with a namespaced class
         manager = SamplerManager.new
-        key = Circulator::Diverter.model_key(manager)
+        key = Circulator.model_key(manager)
         assert_equal "SamplerManager", key
       end
     end
@@ -114,7 +114,7 @@ class CirculatorCoverageTest < Minitest::Test
     describe "Invalid action error in flow method" do
       it "raises error for invalid action in flow method" do
         flow_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status
 
@@ -139,7 +139,7 @@ class CirculatorCoverageTest < Minitest::Test
       it "raises error when action_allowed is called outside state block without from option" do
         assert_raises(RuntimeError) do
           Class.new do
-            extend Circulator::Diverter
+            extend Circulator
 
             attr_accessor :status
 
@@ -153,7 +153,7 @@ class CirculatorCoverageTest < Minitest::Test
 
       it "works with from option outside state block" do
         allowed_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :user_role
 
@@ -184,7 +184,7 @@ class CirculatorCoverageTest < Minitest::Test
     describe "action_allowed with nil from state" do
       it "handles action_allowed with nil from state" do
         nil_allowed_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :can_initialize
 
@@ -213,7 +213,7 @@ class CirculatorCoverageTest < Minitest::Test
 
       it "handles action_allowed with nil state in state block" do
         nil_state_allowed_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :can_proceed
 
@@ -254,7 +254,7 @@ class CirculatorCoverageTest < Minitest::Test
     describe "no_action getter" do
       it "returns the no_action proc when called without block" do
         getter_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status
 
@@ -278,7 +278,7 @@ class CirculatorCoverageTest < Minitest::Test
 
       it "returns the default no_action proc when not set" do
         default_getter_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status
 
@@ -306,7 +306,7 @@ class CirculatorCoverageTest < Minitest::Test
     describe "allow_if returning false" do
       it "does not transition when allow_if returns false" do
         allow_if_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :transition_count
 
@@ -336,7 +336,7 @@ class CirculatorCoverageTest < Minitest::Test
     describe "transition with block execution" do
       it "executes transition block when present" do
         block_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :block_executed
 
@@ -365,7 +365,7 @@ class CirculatorCoverageTest < Minitest::Test
     describe "callable to option" do
       it "uses callable to option to determine next state" do
         callable_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :next_state
 
@@ -392,7 +392,7 @@ class CirculatorCoverageTest < Minitest::Test
     describe "no transition found" do
       it "calls no_action when no transition found" do
         no_transition_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :no_action_called
 
@@ -429,7 +429,7 @@ class CirculatorCoverageTest < Minitest::Test
     describe "flow with additional block" do
       it "executes additional block passed to flow method" do
         additional_block_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :additional_block_executed
 
@@ -460,7 +460,7 @@ class CirculatorCoverageTest < Minitest::Test
       it "delegates to flow_target when self doesn't respond to method" do
         # Create a Task class
         task_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :completed
 
@@ -491,7 +491,7 @@ class CirculatorCoverageTest < Minitest::Test
 
         # Create a Manager class that doesn't have the method
         manager_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           def self.name
             "TaskManager"
@@ -529,7 +529,7 @@ class CirculatorCoverageTest < Minitest::Test
     describe "non-symbol status values" do
       it "handles integer status values" do
         integer_status_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status
 

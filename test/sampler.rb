@@ -1,7 +1,7 @@
 require_relative "../lib/circulator"
 
 class Sampler
-  extend Circulator::Diverter
+  extend Circulator
 
   attr_accessor :status, :priority, :workflow_state, :processing_state
   attr_accessor :approval_count, :notes, :user_role, :resolver, :reason
@@ -117,7 +117,7 @@ class SamplerTask
 end
 
 class SamplerManager
-  extend Circulator::Diverter
+  extend Circulator
 
   attr_accessor :managed_status
 
