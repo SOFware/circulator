@@ -39,7 +39,7 @@ gem install circulator
 
 ```ruby
 class Order
-  extend Circulator::Diverter
+  extend Circulator
 
   attr_accessor :status
 
@@ -77,7 +77,7 @@ order.status_deliver  # => :delivered
 
 ```ruby
 class Document
-  extend Circulator::Diverter
+  extend Circulator
 
   attr_accessor :state, :reviewed_by
 
@@ -97,7 +97,7 @@ end
 
 ```ruby
 class Task
-  extend Circulator::Diverter
+  extend Circulator
 
   attr_accessor :priority, :urgency_level
 
@@ -114,7 +114,7 @@ end
 
 ```ruby
 class Server
-  extend Circulator::Diverter
+  extend Circulator
 
   attr_accessor :power_state, :network_state
 
@@ -147,7 +147,7 @@ end
 
 ```ruby
 class Payment
-  extend Circulator::Diverter
+  extend Circulator
 
   attr_accessor :status, :processed_at
 

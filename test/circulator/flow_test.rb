@@ -1,7 +1,7 @@
 require "test_helper"
 
 class ManagerTest
-  extend Circulator::Diverter
+  extend Circulator
 
   attr_accessor :status, :counter, :user_role, :notes, :approval_count
 
@@ -21,7 +21,7 @@ class CirculatorFlowTest < Minitest::Test
   describe "Flow state machine behavior" do
     let(:flow_class) do
       Class.new do
-        extend Circulator::Diverter
+        extend Circulator
 
         attr_accessor :status, :counter, :user_role, :notes, :approval_count
 
@@ -237,7 +237,7 @@ class CirculatorFlowTest < Minitest::Test
     describe "flow method with arguments" do
       it "passes arguments to transition blocks" do
         flow_class_with_args = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :args_received
 
@@ -289,7 +289,7 @@ class CirculatorFlowTest < Minitest::Test
     describe "multiple flows on same object" do
       let(:multi_flow_class) do
         Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :priority, :counter
 
@@ -352,7 +352,7 @@ class CirculatorFlowTest < Minitest::Test
     describe "no_action behavior" do
       let(:no_action_flow_class) do
         Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :no_action_called, :no_action_args
 
@@ -432,7 +432,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "allows no_action block to raise custom errors" do
         custom_error_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status
 
@@ -460,7 +460,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "allows no_action block to perform side effects" do
         side_effect_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :side_effect_count, :last_action_attempted
 
@@ -498,7 +498,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "handles string status values in no_action blocks" do
         string_status_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :no_action_called
 
@@ -529,7 +529,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "defaults to raising error when no no_action block is specified" do
         default_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status
 
@@ -566,7 +566,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "handles multiple no_action calls correctly" do
         multiple_calls_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :call_count
 
@@ -605,7 +605,7 @@ class CirculatorFlowTest < Minitest::Test
     describe "callable to: behavior" do
       let(:callable_to_class) do
         Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :counter, :transition_args, :transition_kwargs
 
@@ -752,7 +752,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "executes transition blocks before callable to:" do
         transition_block_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :block_executed, :final_state
 
@@ -785,7 +785,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "respects allow_if conditions with callable to:" do
         conditional_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :user_role, :transition_count
 
@@ -821,7 +821,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "handles complex callable to: with multiple operations" do
         complex_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :log, :timestamp
 
@@ -856,7 +856,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "handles callable to: that returns nil or invalid states" do
         nil_return_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status
 
@@ -883,7 +883,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "works with string status values and callable to:" do
         string_status_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status
 
@@ -906,7 +906,7 @@ class CirculatorFlowTest < Minitest::Test
     describe "nil to: and from: behavior" do
       let(:nil_behavior_class) do
         Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :transition_log
 
@@ -967,7 +967,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "works with callable to: that returns nil" do
         callable_nil_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :should_clear
 
@@ -995,7 +995,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "handles nil with allow_if conditions" do
         conditional_nil_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :user_role, :transition_count
 
@@ -1044,7 +1044,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "works with blocks and nil transitions" do
         block_nil_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :execution_order
 
@@ -1086,7 +1086,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "handles string status values with nil transitions" do
         string_nil_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status
 
@@ -1113,7 +1113,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "works with no_action when transitioning to/from nil" do
         no_action_nil_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :no_action_called
 
@@ -1154,7 +1154,7 @@ class CirculatorFlowTest < Minitest::Test
     describe "block passing behavior" do
       let(:block_flow_class) do
         Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :block_executed, :block_args, :block_kwargs, :execution_order
 
@@ -1259,7 +1259,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "executes blocks with callable to: transitions" do
         callable_block_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :execution_order
 
@@ -1292,7 +1292,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "executes blocks when allow_if condition is true" do
         conditional_block_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :user_role, :block_executed
 
@@ -1324,7 +1324,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "does not execute blocks when allow_if condition is false" do
         conditional_block_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :user_role, :block_executed
 
@@ -1353,7 +1353,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "does not execute blocks with no_action when no transition exists" do
         no_action_block_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :block_executed
 
@@ -1387,7 +1387,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "handles multiple blocks in complex scenarios" do
         complex_block_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :execution_order, :counter
 
@@ -1437,7 +1437,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "works with string status values and blocks" do
         string_block_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :block_executed
 
@@ -1465,7 +1465,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "handles blocks with from: option" do
         from_block_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :block_executed
 
@@ -1498,7 +1498,7 @@ class CirculatorFlowTest < Minitest::Test
 
       it "executes blocks in correct order with all flow features" do
         order_flow_class = Class.new do
-          extend Circulator::Diverter
+          extend Circulator
 
           attr_accessor :status, :execution_order
 
