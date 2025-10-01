@@ -1,19 +1,30 @@
+# SimpleCov configuration
+# This file is loaded automatically by SimpleCov when tests run
+
+# Start SimpleCov with configuration
 SimpleCov.start do
+  # Configure formatters - use both HTML and JSON
+  require "simplecov-html"
+  require "simplecov_json_formatter"
+  formatter SimpleCov::Formatter::MultiFormatter.new([
+    SimpleCov::Formatter::HTMLFormatter,
+    SimpleCov::Formatter::JSONFormatter
+  ])
+
+  # Track all library files
+  track_files "lib/**/*.rb"
+
+  # Enable coverage types
+  enable_coverage :line
+  enable_coverage :branch
+
+  # Filters
   add_filter "/test/"
   add_filter "/lib/circulator/version.rb"
+  add_filter "/exe/"
 
-  # Note: SimpleCov has a known limitation with tracking coverage inside
-  # define_method blocks when multiple test files are loaded together.
-  #
-  # Lines not tracked by SimpleCov when running full test suite:
-  # - diverter.rb lines 171-189: Inside define_method block for flow actions
-  # - diverter.rb lines 228-229: Inside InstanceMethods#flow method
-  #
-  # These lines ARE covered by tests, as proven by running:
-  # CI=1 bundle exec ruby -Ilib:test test/circulator/coverage_test.rb
-  # which shows 100% coverage (108/108 lines).
-  #
-  # The issue only occurs when running the full test suite via rake,
-  # where SimpleCov reports 72.22% (78/108 lines) due to this limitation.
-  minimum_coverage 70
+  # Minimum coverage thresholds
+  # Note: define_method blocks cannot be tracked by SimpleCov
+  # See test/circulator/metaprogramming_coverage_test.rb for proof of execution
+  minimum_coverage line: 95, branch: 85
 end
