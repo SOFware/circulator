@@ -1,0 +1,118 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "optparse"
+require "fileutils"
+require_relative "../lib/circulator"
+require_relative "../lib/circulator/dot"
+require_relative "../lib/circulator/plantuml"
+
+# Parse command-line options
+options = {format: "dot"}
+parser = OptionParser.new do |opts|
+  opts.banner = "Usage: circulator-diagram MODEL_NAME [options]"
+  opts.separator ""
+  opts.separator "Generate diagram files for Circulator state machine flows"
+  opts.separator ""
+  opts.separator "Arguments:"
+  opts.separator "  MODEL_NAME    Name of the model class with Circulator flows"
+  opts.separator ""
+  opts.separator "Options:"
+
+  opts.on("-f", "--format FORMAT", ["dot", "plantuml"], "Output format (dot, plantuml). Default: dot") do |format|
+    options[:format] = format
+  end
+
+  opts.on("-h", "--help", "Show this help message") do
+    puts opts
+    exit 0
+  end
+
+  opts.on("-v", "--version", "Show version") do
+    puts "circulator-diagram #{Circulator::VERSION}"
+    exit 0
+  end
+end
+
+begin
+  parser.parse!
+rescue OptionParser::InvalidOption => e
+  warn "Error: #{e.message}"
+  warn parser
+  exit 1
+end
+
+# Check for required model name argument
+if ARGV.empty?
+  warn "Error: MODEL_NAME is required"
+  warn ""
+  warn parser
+  exit 1
+end
+
+model_name = ARGV[0]
+
+# Try to constantize the model name
+begin
+  model_class = Object.const_get(model_name)
+rescue NameError
+  warn "Error: Model '#{model_name}' not found"
+  warn "Make sure the model is loaded in your environment"
+  exit 1
+end
+
+# Generate diagram file
+begin
+  generator = case options[:format]
+  when "plantuml"
+    Circulator::PlantUml.new(model_class)
+  else
+    Circulator::Dot.new(model_class)
+  end
+
+  content = generator.generate
+
+  # Determine output filename and extension
+  # Convert namespaced class names to directory paths
+  # Something::Other becomes something/other
+  class_name = model_class.name || "diagram"
+  path_parts = class_name.split("::").map { |part|
+    part.gsub(/([a-z])([A-Z])/, '\1_\2').downcase
+  }
+  base_name = path_parts.join("/")
+
+  if options[:format] == "plantuml"
+    # Use model class name for PlantUML files
+    output_file = "#{base_name}.puml"
+
+    # Create directory if needed
+    dir = File.dirname(output_file)
+    FileUtils.mkdir_p(dir) unless dir == "." || File.exist?(dir)
+
+    File.write(output_file, content)
+    puts "Generated PlantUML file: #{output_file}"
+    puts "To create an image, run:"
+    puts "  plantuml #{output_file}"
+  else
+    # Use model class name for DOT files
+    output_file = "#{base_name}.dot"
+
+    # Create directory if needed
+    dir = File.dirname(output_file)
+    FileUtils.mkdir_p(dir) unless dir == "." || File.exist?(dir)
+
+    File.write(output_file, content)
+    puts "Generated DOT file: #{output_file}"
+    puts "To create an image, run:"
+    puts "  dot -Tpng #{output_file} -o #{base_name}.png"
+  end
+
+  exit 0
+rescue ArgumentError => e
+  warn "Error: #{e.message}"
+  exit 1
+rescue => e
+  warn "Error: #{e.class} - #{e.message}"
+  warn e.backtrace.first(5).join("\n") if ENV["DEBUG"]
+  exit 1
+end

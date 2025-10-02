@@ -17,7 +17,7 @@ Gem::Specification.new do |spec|
   spec.metadata["source_code_uri"] = "https://github.com/SOFware/circulator"
 
   File.basename(__FILE__)
-  spec.files = Dir["lib/**/*.rb", "README.md", "LICENSE.txt", "Rakefile", "CHANGELOG.md"]
+  spec.files = Dir["lib/**/*.rb", "exe/*", "README.md", "LICENSE.txt", "Rakefile", "CHANGELOG.md"]
   spec.bindir = "exe"
   spec.executables = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
   spec.require_paths = ["lib"]
