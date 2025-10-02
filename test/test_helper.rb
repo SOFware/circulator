@@ -7,5 +7,6 @@ end
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 require "circulator"
 require "circulator/dot"
+require "circulator/plantuml"
 
 require "minitest/autorun"

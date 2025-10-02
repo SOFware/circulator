@@ -149,3 +149,12 @@ class SamplerManager
     end
   end
 end
+
+# Class for testing empty flows error condition
+# This class extends Circulator but has no flows defined
+class EmptyFlowsSampler
+  extend Circulator
+
+  # Clear the flows that Circulator creates
+  @flows&.clear
+end
