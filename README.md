@@ -168,6 +168,18 @@ class Payment
 end
 ```
 
+### Generating Diagrams
+
+You can generate diagrams for your Circulator models using the `circulator-diagram` executable. By default, it will generate a DOT file. You can also generate a PlantUML file by passing the `-f plantuml` option.
+
+```bash
+bundle exec circulator-diagram MODEL_NAME
+```
+
+```bash
+bundle exec circulator-diagram MODEL_NAME -f plantuml
+```
+
 ## Why Circulator?
 
 Circulator distinguishes itself from other Ruby state machine libraries through its simplicity and flexibility:
