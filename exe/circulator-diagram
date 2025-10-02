@@ -8,7 +8,7 @@ require_relative "../lib/circulator/dot"
 require_relative "../lib/circulator/plantuml"
 
 # Parse command-line options
-options = {format: "dot", require: nil}
+options = {format: "dot", require: nil, directory: "docs"}
 parser = OptionParser.new do |opts|
   opts.banner = "Usage: circulator-diagram MODEL_NAME [options]"
   opts.separator ""
@@ -21,6 +21,10 @@ parser = OptionParser.new do |opts|
 
   opts.on("-f", "--format FORMAT", ["dot", "plantuml"], "Output format (dot, plantuml). Default: dot") do |format|
     options[:format] = format
+  end
+
+  opts.on("-d", "--directory DIRECTORY", "Output directory. Default: docs") do |directory|
+    options[:directory] = directory
   end
 
   opts.on("-r", "--require FILE", "Require a file before loading the model (e.g., config/environment)") do |file|
@@ -102,11 +106,11 @@ begin
 
   if options[:format] == "plantuml"
     # Use model class name for PlantUML files
-    output_file = "#{base_name}.puml"
+    output_file = File.join(options[:directory], "#{base_name}.puml")
 
     # Create directory if needed
     dir = File.dirname(output_file)
-    FileUtils.mkdir_p(dir) unless dir == "." || File.exist?(dir)
+    FileUtils.mkdir_p(dir) unless File.exist?(dir)
 
     File.write(output_file, content)
     puts "Generated PlantUML file: #{output_file}"
@@ -114,16 +118,16 @@ begin
     puts "  plantuml #{output_file}"
   else
     # Use model class name for DOT files
-    output_file = "#{base_name}.dot"
+    output_file = File.join(options[:directory], "#{base_name}.dot")
 
     # Create directory if needed
     dir = File.dirname(output_file)
-    FileUtils.mkdir_p(dir) unless dir == "." || File.exist?(dir)
+    FileUtils.mkdir_p(dir) unless File.exist?(dir)
 
     File.write(output_file, content)
     puts "Generated DOT file: #{output_file}"
     puts "To create an image, run:"
-    puts "  dot -Tpng #{output_file} -o #{base_name}.png"
+    puts "  dot -Tpng #{output_file} -o #{File.join(options[:directory], base_name)}.png"
   end
 
   exit 0

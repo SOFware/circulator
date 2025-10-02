@@ -132,7 +132,7 @@ class DiagramExecutableTest < Minitest::Test
 
           assert status.success?, "Expected success but got: #{stderr}"
           assert_match(/Generated DOT file/, stdout)
-          dot_file = File.join(tmpdir, "custom_model.dot")
+          dot_file = File.join(tmpdir, "docs", "custom_model.dot")
           assert File.exist?(dot_file)
           content = File.read(dot_file)
           assert_match(/draft -> published/, content)
@@ -218,7 +218,7 @@ class DiagramExecutableTest < Minitest::Test
 
           assert status.success?, "Expected success but got: #{stderr}"
           assert_match(/Generated DOT file/, stdout)
-          dot_file = File.join(tmpdir, "rails_model.dot")
+          dot_file = File.join(tmpdir, "docs", "rails_model.dot")
           assert File.exist?(dot_file)
           content = File.read(dot_file)
           assert_match(/submitted -> under_review/, content)
@@ -270,7 +270,7 @@ class DiagramExecutableTest < Minitest::Test
 
           assert status.success?, "Expected success but got: #{stderr}"
           assert_match(/Generated DOT file/, stdout)
-          dot_file = File.join(tmpdir, "custom_priority_model.dot")
+          dot_file = File.join(tmpdir, "docs", "custom_priority_model.dot")
           assert File.exist?(dot_file)
           content = File.read(dot_file)
           assert_match(/ready -> running/, content)
@@ -290,7 +290,7 @@ class DiagramExecutableTest < Minitest::Test
           )
 
           if status.success?
-            dot_file = File.join(tmpdir, "valid_test_model.dot")
+            dot_file = File.join(tmpdir, "docs", "valid_test_model.dot")
             assert File.exist?(dot_file), "Expected DOT file to be created"
             content = File.read(dot_file)
             assert_match(/digraph/, content)
@@ -328,7 +328,7 @@ class DiagramExecutableTest < Minitest::Test
           )
 
           if status.success?
-            puml_file = File.join(tmpdir, "valid_test_model.puml")
+            puml_file = File.join(tmpdir, "docs", "valid_test_model.puml")
             assert File.exist?(puml_file), "Expected PlantUML file to be created"
             content = File.read(puml_file)
             assert_match(/@startuml/, content)
@@ -351,9 +351,48 @@ class DiagramExecutableTest < Minitest::Test
           )
 
           if status.success?
-            puml_file = File.join(tmpdir, "valid_test_model.puml")
+            puml_file = File.join(tmpdir, "docs", "valid_test_model.puml")
             assert File.exist?(puml_file)
             assert_match(/Generated PlantUML file/, stdout)
+          end
+        end
+      end
+
+      it "uses custom directory with --directory option" do
+        Dir.mktmpdir do |tmpdir|
+          env = {"RUBYLIB" => File.expand_path("../../lib", __dir__)}
+          stdout, _, status = Open3.capture3(
+            env,
+            executable_path,
+            "ValidTestModel",
+            "--directory", "diagrams",
+            chdir: tmpdir
+          )
+
+          if status.success?
+            dot_file = File.join(tmpdir, "diagrams", "valid_test_model.dot")
+            assert File.exist?(dot_file), "Expected DOT file to be created in custom directory"
+            assert_match(/Generated DOT file/, stdout)
+            assert_match(/diagrams\/valid_test_model\.dot/, stdout)
+          end
+        end
+      end
+
+      it "accepts -d short option for directory" do
+        Dir.mktmpdir do |tmpdir|
+          env = {"RUBYLIB" => File.expand_path("../../lib", __dir__)}
+          stdout, _, status = Open3.capture3(
+            env,
+            executable_path,
+            "ValidTestModel",
+            "-d", "output",
+            chdir: tmpdir
+          )
+
+          if status.success?
+            dot_file = File.join(tmpdir, "output", "valid_test_model.dot")
+            assert File.exist?(dot_file), "Expected DOT file to be created in custom directory"
+            assert_match(/output\/valid_test_model\.dot/, stdout)
           end
         end
       end
