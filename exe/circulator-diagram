@@ -8,7 +8,7 @@ require_relative "../lib/circulator/dot"
 require_relative "../lib/circulator/plantuml"
 
 # Parse command-line options
-options = {format: "dot"}
+options = {format: "dot", require: nil}
 parser = OptionParser.new do |opts|
   opts.banner = "Usage: circulator-diagram MODEL_NAME [options]"
   opts.separator ""
@@ -21,6 +21,10 @@ parser = OptionParser.new do |opts|
 
   opts.on("-f", "--format FORMAT", ["dot", "plantuml"], "Output format (dot, plantuml). Default: dot") do |format|
     options[:format] = format
+  end
+
+  opts.on("-r", "--require FILE", "Require a file before loading the model (e.g., config/environment)") do |file|
+    options[:require] = file
   end
 
   opts.on("-h", "--help", "Show this help message") do
@@ -51,6 +55,21 @@ if ARGV.empty?
 end
 
 model_name = ARGV[0]
+
+# Load the application environment
+# Priority: -r option > config/environment.rb > nothing
+if options[:require]
+  # User specified a file to require
+  require_file = options[:require]
+  unless File.exist?(require_file)
+    warn "Error: Required file '#{require_file}' not found"
+    exit 1
+  end
+  require require_file
+elsif File.exist?("config/environment.rb")
+  # Rails application detected, load the environment
+  require File.expand_path("config/environment.rb")
+end
 
 # Try to constantize the model name
 begin
