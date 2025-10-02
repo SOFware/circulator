@@ -104,7 +104,7 @@ class CirculatorDotTest < Minitest::Test
 
         # Sampler has priority flow with callable to: options
         assert_match(/normal -> \?/, result)
-        assert_match(/label="escalate \(dynamic\)"/, result)
+        assert_match(/label="  escalate \(dynamic\)"/, result)
       end
 
       it "handles multiple from states for one action" do
@@ -158,7 +158,7 @@ class CirculatorDotTest < Minitest::Test
         result = dot.generate
 
         # Should use anonymous_XXX format when class has no name
-        assert_match(/digraph anonymous_[0-9a-f]+_flows/, result)
+        assert_match(/digraph "anonymous_[0-9a-f]+ flows"/, result)
       end
 
       it "covers model_key different from class_name branch in graph_name" do
@@ -166,7 +166,7 @@ class CirculatorDotTest < Minitest::Test
         result = dot.generate
 
         # Should use model key (SamplerTask) for the model-based flow
-        assert_match(/SamplerTask_flows/, result)
+        assert_match(/SamplerTask flows/, result)
       end
 
       it "covers nil state in state node output" do

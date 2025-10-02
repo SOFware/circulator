@@ -1,72 +1,58 @@
 # frozen_string_literal: true
 
+require_relative "diagram"
+
 module Circulator
-  class PlantUml
-    def initialize(model_class)
-      unless model_class.respond_to?(:flows)
-        raise ArgumentError, "Model class must extend Circulator"
-      end
+  class PlantUml < Diagram
+    private
 
-      flows = model_class.flows
-      if flows.nil? || flows.empty?
-        raise ArgumentError, "Model class has no flows defined"
-      end
+    # def graph_name
+    #   @model_class.name || "diagram"
+    # end
 
-      @model_class = model_class
-      @flows = flows
+    def header
+      <<~PLANTUML
+        @startuml #{graph_name}
+        title #{graph_name}
+      PLANTUML
     end
 
-    def generate
-      output = []
-      output << "@startuml"
-      output << ""
+    def footer
+      <<~PLANTUML
 
-      # Collect all states and transitions
-      states = Set.new
-      transitions = []
+        @enduml
+      PLANTUML
+    end
 
-      @flows.each do |model_key, attribute_flows|
-        attribute_flows.each do |attribute_name, flow|
-          # Extract states and transitions from the flow
-          flow.transition_map.each do |action, state_transitions|
-            state_transitions.each do |from_state, transition_info|
-              states.add(from_state)
+    def dynamic_transition(action, from_state, to_state = nil)
+      {
+        from: from_state,
+        to: to_state,
+        label: action.to_s,
+        note: "dynamic target state"
+      }
+    end
 
-              to_state = transition_info[:to]
-              if to_state.respond_to?(:call)
-                # Dynamic state - use [*] as placeholder (end state)
-                label = action.to_s
-                transitions << {
-                  from: from_state,
-                  to: nil,
-                  label: label,
-                  note: "dynamic target state"
-                }
-              else
-                states.add(to_state)
-                label = action.to_s
-                note = nil
-                note = "conditional transition" if transition_info[:allow_if]
-                transitions << {
-                  from: from_state,
-                  to: to_state,
-                  label: label,
-                  note: note
-                }
-              end
-            end
-          end
-        end
+    def standard_transition(action, from_state, to_state, conditional: nil)
+      note = if conditional
+        "conditional transition"
       end
 
-      # Output state declarations (except nil which is represented as [*])
+      {
+        from: from_state,
+        to: to_state,
+        label: action.to_s,
+        note:
+      }
+    end
+
+    def states_output(states, output)
       states.reject(&:nil?).sort_by(&:to_s).each do |state|
         output << "state #{state}"
       end
+    end
 
-      output << ""
-
-      # Output transitions
+    def transitions_output(transitions, output)
       transitions.sort_by { |t| [t[:from].to_s, t[:to].to_s, t[:label]] }.each do |transition|
         from_label = transition[:from].nil? ? "[*]" : transition[:from].to_s
         to_label = transition[:to].nil? ? "[*]" : transition[:to].to_s
@@ -79,10 +65,6 @@ module Circulator
           output << "end note"
         end
       end
-
-      output << ""
-      output << "@enduml"
-      output.join("\n") + "\n"
     end
   end
 end

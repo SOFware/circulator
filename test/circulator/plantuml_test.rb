@@ -96,7 +96,7 @@ class CirculatorPlantUmlTest < Minitest::Test
         plantuml = Circulator::PlantUml.new(Sampler)
         result = plantuml.generate
 
-        assert_match(/normal --> \[\*\] : escalate/, result)
+        assert_match(/normal --> \? : escalate/, result)
         assert_match(/note on link/, result)
         assert_match(/dynamic/, result)
       end
