@@ -10,3 +10,4 @@ require "circulator/dot"
 require "circulator/plantuml"
 
 require "minitest/autorun"
+require "minitest/hell"  # Enable parallel test execution
