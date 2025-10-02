@@ -21,4 +21,5 @@ Reissue::Task.create :reissue do |task|
   task.version_file = "lib/circulator/version.rb"
   task.changelog_file = "CHANGELOG.md"
   task.version_limit = 1
+  task.fragment = :git
 end
