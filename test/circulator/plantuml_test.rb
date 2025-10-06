@@ -52,17 +52,19 @@ class CirculatorPlantUmlTest < Minitest::Test
         plantuml = Circulator::PlantUml.new(Sampler)
         result = plantuml.generate
 
-        assert_match(/state pending/, result)
-        assert_match(/state approved/, result)
-        assert_match(/state rejected/, result)
+        # With multi-flow grouping, states are prefixed
+        assert_match(/state "pending" as status_pending/, result)
+        assert_match(/state "approved" as status_approved/, result)
+        assert_match(/state "rejected" as status_rejected/, result)
       end
 
       it "includes all transitions with action labels" do
         plantuml = Circulator::PlantUml.new(Sampler)
         result = plantuml.generate
 
-        assert_match(/pending --> approved : approve/, result)
-        assert_match(/approved --> archived : archive/, result)
+        # With multi-flow grouping, transitions use prefixed names
+        assert_match(/status_pending --> status_approved : approve/, result)
+        assert_match(/status_approved --> status_archived : archive/, result)
       end
 
       it "handles nil state transitions" do
@@ -70,7 +72,7 @@ class CirculatorPlantUmlTest < Minitest::Test
         result = plantuml.generate
 
         assert_match(/\[\*\]/, result)
-        assert_match(/\[\*\] --> in_progress : start/, result)
+        assert_match(/\[\*\] --> workflow_state_in_progress : start/, result)
       end
 
       it "handles multiple flows on same model" do
@@ -83,11 +85,46 @@ class CirculatorPlantUmlTest < Minitest::Test
         assert_match(/approved/, result)
       end
 
+      it "groups multiple flows into composite states with labels" do
+        plantuml = Circulator::PlantUml.new(Sampler)
+        result = plantuml.generate
+
+        # Should have composite states for each flow attribute
+        assert_match(/state ":status" as status_group \{/, result)
+        assert_match(/state ":priority" as priority_group \{/, result)
+        assert_match(/state ":workflow_state" as workflow_state_group \{/, result)
+        assert_match(/state ":processing_state" as processing_state_group \{/, result)
+      end
+
+      it "prefixes state names with attribute in multi-flow diagrams" do
+        plantuml = Circulator::PlantUml.new(Sampler)
+        result = plantuml.generate
+
+        # States should be defined with attribute prefixes
+        assert_match(/state "pending" as status_pending/, result)
+        assert_match(/state "normal" as priority_normal/, result)
+        assert_match(/state "in_progress" as workflow_state_in_progress/, result)
+        assert_match(/state "idle" as processing_state_idle/, result)
+        # Special characters like ? are replaced with safe identifiers
+        assert_match(/state "\?" as priority_unknown/, result)
+      end
+
+      it "uses prefixed state names in transitions for multi-flow diagrams" do
+        plantuml = Circulator::PlantUml.new(Sampler)
+        result = plantuml.generate
+
+        # Transitions should use prefixed state names
+        assert_match(/status_pending --> status_approved/, result)
+        # Special characters like ? are replaced with safe identifiers
+        assert_match(/priority_normal --> priority_unknown/, result)
+        assert_match(/workflow_state_in_progress --> workflow_state_completed/, result)
+      end
+
       it "handles conditional transitions with allow_if" do
         plantuml = Circulator::PlantUml.new(Sampler)
         result = plantuml.generate
 
-        assert_match(/rejected --> pending : reconsider/, result)
+        assert_match(/status_rejected --> status_pending : reconsider/, result)
         assert_match(/note on link/, result)
         assert_match(/conditional/, result)
       end
@@ -96,7 +133,8 @@ class CirculatorPlantUmlTest < Minitest::Test
         plantuml = Circulator::PlantUml.new(Sampler)
         result = plantuml.generate
 
-        assert_match(/normal --> \? : escalate/, result)
+        # Special characters like ? are replaced with safe identifiers
+        assert_match(/priority_normal --> priority_unknown : escalate/, result)
         assert_match(/note on link/, result)
         assert_match(/dynamic/, result)
       end
@@ -105,15 +143,16 @@ class CirculatorPlantUmlTest < Minitest::Test
         plantuml = Circulator::PlantUml.new(Sampler)
         result = plantuml.generate
 
-        assert_match(/in_progress --> failed : fail/, result)
-        assert_match(/completed --> failed : fail/, result)
+        assert_match(/workflow_state_in_progress --> workflow_state_failed : fail/, result)
+        assert_match(/workflow_state_completed --> workflow_state_failed : fail/, result)
       end
 
       it "handles model-based flows" do
         plantuml = Circulator::PlantUml.new(SamplerManager)
         result = plantuml.generate
 
-        assert_match(/pending --> in_progress/, result)
+        # SamplerManager has 2 flows, so they should be prefixed
+        assert_match(/status_pending --> status_in_progress/, result)
       end
 
       it "generates complete valid PlantUML structure" do
@@ -122,10 +161,62 @@ class CirculatorPlantUmlTest < Minitest::Test
 
         # Verify structure
         assert_match(/@startuml/, result)
-        assert_match(/state pending/, result)
-        assert_match(/state approved/, result)
-        assert_match(/pending --> approved : approve/, result)
+        assert_match(/state "pending" as status_pending/, result)
+        assert_match(/state "approved" as status_approved/, result)
+        assert_match(/status_pending --> status_approved : approve/, result)
         assert_match(/@enduml/, result)
+      end
+    end
+
+    describe "#generate_separate" do
+      it "returns a hash with one entry per flow attribute" do
+        plantuml = Circulator::PlantUml.new(Sampler)
+        result = plantuml.generate_separate
+
+        assert_instance_of Hash, result
+        assert_equal 4, result.size
+        assert result.key?(:status)
+        assert result.key?(:priority)
+        assert result.key?(:workflow_state)
+        assert result.key?(:processing_state)
+      end
+
+      it "generates valid PlantUML diagram for each flow" do
+        plantuml = Circulator::PlantUml.new(Sampler)
+        result = plantuml.generate_separate
+
+        result.each do |attribute_name, content|
+          assert_match(/@startuml/, content)
+          assert_match(/@enduml/, content)
+          assert_match(/#{attribute_name} flow/, content)
+        end
+      end
+
+      it "includes only states from that specific flow in each diagram" do
+        plantuml = Circulator::PlantUml.new(Sampler)
+        result = plantuml.generate_separate
+
+        # Status flow should have status states but not priority states
+        assert_match(/state pending/, result[:status])
+        assert_match(/state approved/, result[:status])
+        refute_match(/state normal/, result[:status])
+        refute_match(/state critical/, result[:status])
+
+        # Priority flow should have priority states but not status states
+        assert_match(/state normal/, result[:priority])
+        assert_match(/state critical/, result[:priority])
+        refute_match(/state pending/, result[:priority])
+        refute_match(/state approved/, result[:priority])
+      end
+
+      it "does not use prefixed state names in separate diagrams" do
+        plantuml = Circulator::PlantUml.new(Sampler)
+        result = plantuml.generate_separate
+
+        # Separate diagrams should use clean state names without prefixes
+        assert_match(/state pending/, result[:status])
+        assert_match(/pending --> approved : approve/, result[:status])
+        refute_match(/status_pending/, result[:status])
       end
     end
 
@@ -143,7 +234,7 @@ class CirculatorPlantUmlTest < Minitest::Test
         result = plantuml.generate
 
         # Transition to nil should show [*]
-        assert_match(/completed --> \[\*\]/, result)
+        assert_match(/workflow_state_completed --> \[\*\]/, result)
       end
 
       it "covers non-callable to state without allow_if" do
@@ -151,9 +242,9 @@ class CirculatorPlantUmlTest < Minitest::Test
         result = plantuml.generate
 
         # Should not have notes for simple transitions
-        assert_match(/pending --> approved : approve/, result)
+        assert_match(/status_pending --> status_approved : approve/, result)
         lines = result.split("\n")
-        transition_line_index = lines.index { |l| l.include?("pending --> approved") }
+        transition_line_index = lines.index { |l| l.include?("status_pending --> status_approved") }
         next_line = lines[transition_line_index + 1]
         refute_match(/note on link/, next_line) if next_line
       end

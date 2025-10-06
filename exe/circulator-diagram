@@ -8,7 +8,7 @@ require_relative "../lib/circulator/dot"
 require_relative "../lib/circulator/plantuml"
 
 # Parse command-line options
-options = {format: "dot", require: nil, directory: "docs"}
+options = {format: "dot", require: nil, directory: "docs", separate: false}
 parser = OptionParser.new do |opts|
   opts.banner = "Usage: circulator-diagram MODEL_NAME [options]"
   opts.separator ""
@@ -25,6 +25,10 @@ parser = OptionParser.new do |opts|
 
   opts.on("-d", "--directory DIRECTORY", "Output directory. Default: docs") do |directory|
     options[:directory] = directory
+  end
+
+  opts.on("-s", "--separate", "Generate separate diagram files for each flow attribute") do
+    options[:separate] = true
   end
 
   opts.on("-r", "--require FILE", "Require a file before loading the model (e.g., config/environment)") do |file|
@@ -84,7 +88,7 @@ rescue NameError
   exit 1
 end
 
-# Generate diagram file
+# Generate diagram file(s)
 begin
   generator = case options[:format]
   when "plantuml"
@@ -93,9 +97,7 @@ begin
     Circulator::Dot.new(model_class)
   end
 
-  content = generator.generate
-
-  # Determine output filename and extension
+  # Determine base output filename and extension
   # Convert namespaced class names to directory paths
   # Something::Other becomes something/other
   class_name = model_class.name || "diagram"
@@ -104,30 +106,62 @@ begin
   }
   base_name = path_parts.join("/")
 
-  if options[:format] == "plantuml"
-    # Use model class name for PlantUML files
-    output_file = File.join(options[:directory], "#{base_name}.puml")
+  if options[:separate]
+    # Generate separate diagram file for each flow attribute
+    diagrams = generator.generate_separate
+    extension = (options[:format] == "plantuml") ? ".puml" : ".dot"
 
-    # Create directory if needed
-    dir = File.dirname(output_file)
-    FileUtils.mkdir_p(dir) unless File.exist?(dir)
+    diagrams.each do |attribute_name, content|
+      # Create filename with attribute name
+      output_file = File.join(options[:directory], "#{base_name}_#{attribute_name}#{extension}")
 
-    File.write(output_file, content)
-    puts "Generated PlantUML file: #{output_file}"
-    puts "To create an image, run:"
-    puts "  plantuml #{output_file}"
+      # Create directory if needed
+      dir = File.dirname(output_file)
+      FileUtils.mkdir_p(dir) unless File.exist?(dir)
+
+      File.write(output_file, content)
+      puts "Generated #{options[:format]} file: #{output_file}"
+    end
+
+    puts ""
+    puts "To create images, run:"
+    if options[:format] == "plantuml"
+      puts "  plantuml #{File.join(options[:directory], "#{base_name}_*#{extension}")}"
+    else
+      diagrams.keys.each do |attribute_name|
+        output_file = File.join(options[:directory], "#{base_name}_#{attribute_name}#{extension}")
+        puts "  dot -Tpng #{output_file} -o #{File.join(options[:directory], "#{base_name}_#{attribute_name}")}.png"
+      end
+    end
   else
-    # Use model class name for DOT files
-    output_file = File.join(options[:directory], "#{base_name}.dot")
+    # Generate single combined diagram file
+    content = generator.generate
 
-    # Create directory if needed
-    dir = File.dirname(output_file)
-    FileUtils.mkdir_p(dir) unless File.exist?(dir)
+    if options[:format] == "plantuml"
+      # Use model class name for PlantUML files
+      output_file = File.join(options[:directory], "#{base_name}.puml")
 
-    File.write(output_file, content)
-    puts "Generated DOT file: #{output_file}"
-    puts "To create an image, run:"
-    puts "  dot -Tpng #{output_file} -o #{File.join(options[:directory], base_name)}.png"
+      # Create directory if needed
+      dir = File.dirname(output_file)
+      FileUtils.mkdir_p(dir) unless File.exist?(dir)
+
+      File.write(output_file, content)
+      puts "Generated PlantUML file: #{output_file}"
+      puts "To create an image, run:"
+      puts "  plantuml #{output_file}"
+    else
+      # Use model class name for DOT files
+      output_file = File.join(options[:directory], "#{base_name}.dot")
+
+      # Create directory if needed
+      dir = File.dirname(output_file)
+      FileUtils.mkdir_p(dir) unless File.exist?(dir)
+
+      File.write(output_file, content)
+      puts "Generated DOT file: #{output_file}"
+      puts "To create an image, run:"
+      puts "  dot -Tpng #{output_file} -o #{File.join(options[:directory], base_name)}.png"
+    end
   end
 
   exit 0

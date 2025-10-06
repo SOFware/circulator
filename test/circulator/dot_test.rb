@@ -53,18 +53,20 @@ class CirculatorDotTest < Minitest::Test
         dot = Circulator::Dot.new(Sampler)
         result = dot.generate
 
-        assert_match(/pending/, result)
-        assert_match(/approved/, result)
-        assert_match(/rejected/, result)
+        # With multi-flow grouping, states are prefixed
+        assert_match(/status_pending/, result)
+        assert_match(/status_approved/, result)
+        assert_match(/status_rejected/, result)
       end
 
       it "includes all actions as edges with labels" do
         dot = Circulator::Dot.new(Sampler)
         result = dot.generate
 
-        assert_match(/pending -> approved/, result)
+        # With multi-flow grouping, transitions use prefixed names
+        assert_match(/status_pending -> status_approved/, result)
         assert_match(/label="approve"/, result)
-        assert_match(/approved -> published/, result)
+        assert_match(/status_approved -> status_published/, result)
         assert_match(/label="publish"/, result)
       end
 
@@ -73,8 +75,8 @@ class CirculatorDotTest < Minitest::Test
         result = dot.generate
 
         # Sampler has workflow_state flow with from: nil transitions
-        assert_match(/nil/, result)
-        assert_match(/nil -> in_progress/, result)
+        assert_match(/workflow_state_nil/, result)
+        assert_match(/workflow_state_nil -> workflow_state_in_progress/, result)
         assert_match(/label="start"/, result)
       end
 
@@ -89,12 +91,48 @@ class CirculatorDotTest < Minitest::Test
         assert_match(/idle/, result)
       end
 
+      it "groups multiple flows into subgraph clusters with labels" do
+        dot = Circulator::Dot.new(Sampler)
+        result = dot.generate
+
+        # Should have subgraph clusters for each flow attribute
+        assert_match(/subgraph cluster_0 \{/, result)
+        assert_match(/label=":status"/, result)
+        assert_match(/subgraph cluster_1 \{/, result)
+        assert_match(/label=":priority"/, result)
+        assert_match(/subgraph cluster_2 \{/, result)
+        assert_match(/label=":workflow_state"/, result)
+        assert_match(/subgraph cluster_3 \{/, result)
+        assert_match(/label=":processing_state"/, result)
+      end
+
+      it "prefixes state names with attribute in multi-flow diagrams" do
+        dot = Circulator::Dot.new(Sampler)
+        result = dot.generate
+
+        # States should be prefixed with their attribute name
+        assert_match(/status_pending/, result)
+        assert_match(/priority_normal/, result)
+        assert_match(/workflow_state_in_progress/, result)
+        assert_match(/processing_state_idle/, result)
+      end
+
+      it "uses prefixed state names in transitions for multi-flow diagrams" do
+        dot = Circulator::Dot.new(Sampler)
+        result = dot.generate
+
+        # Transitions should use prefixed state names
+        assert_match(/status_pending -> status_approved/, result)
+        assert_match(/priority_normal -> priority_\?/, result)
+        assert_match(/workflow_state_nil -> workflow_state_in_progress/, result)
+      end
+
       it "handles conditional transitions with allow_if" do
         dot = Circulator::Dot.new(Sampler)
         result = dot.generate
 
         # Sampler has rejected -> pending transition with allow_if
-        assert_match(/rejected -> pending/, result)
+        assert_match(/status_rejected -> status_pending/, result)
         assert_match(/label="reconsider \(conditional\)"/, result)
       end
 
@@ -103,7 +141,7 @@ class CirculatorDotTest < Minitest::Test
         result = dot.generate
 
         # Sampler has priority flow with callable to: options
-        assert_match(/normal -> \?/, result)
+        assert_match(/priority_normal -> priority_\?/, result)
         assert_match(/label="  escalate \(dynamic\)"/, result)
       end
 
@@ -112,8 +150,8 @@ class CirculatorDotTest < Minitest::Test
         result = dot.generate
 
         # Sampler workflow_state has fail action from: [:in_progress, :completed]
-        assert_match(/in_progress -> failed/, result)
-        assert_match(/completed -> failed/, result)
+        assert_match(/workflow_state_in_progress -> workflow_state_failed/, result)
+        assert_match(/workflow_state_completed -> workflow_state_failed/, result)
         assert_match(/label="fail"/, result)
       end
 
@@ -122,20 +160,73 @@ class CirculatorDotTest < Minitest::Test
         result = dot.generate
 
         assert_match(/SamplerTask/, result)
-        assert_match(/pending -> in_progress/, result)
+        # SamplerManager has 2 flows, so transitions use prefixed names
+        assert_match(/status_pending -> status_in_progress/, result)
       end
 
       it "generates complete valid DOT graph structure" do
         dot = Circulator::Dot.new(Sampler)
         result = dot.generate
 
-        # Verify structure
+        # Verify structure with multi-flow prefixes
         assert_match(/^digraph/, result)
         assert_match(/rankdir=LR;/, result)
-        assert_match(/pending \[shape=\w+\];/, result)
-        assert_match(/approved \[shape=\w+\];/, result)
-        assert_match(/pending -> approved \[label="approve"\];/, result)
+        assert_match(/status_pending \[label="pending", shape=circle\];/, result)
+        assert_match(/status_approved \[label="approved", shape=circle\];/, result)
+        assert_match(/status_pending -> status_approved \[label="approve"\];/, result)
         assert result.end_with?("}\n")
+      end
+    end
+
+    describe "#generate_separate" do
+      it "returns a hash with one entry per flow attribute" do
+        dot = Circulator::Dot.new(Sampler)
+        result = dot.generate_separate
+
+        assert_instance_of Hash, result
+        assert_equal 4, result.size
+        assert result.key?(:status)
+        assert result.key?(:priority)
+        assert result.key?(:workflow_state)
+        assert result.key?(:processing_state)
+      end
+
+      it "generates valid DOT diagram for each flow" do
+        dot = Circulator::Dot.new(Sampler)
+        result = dot.generate_separate
+
+        result.each do |attribute_name, content|
+          assert_match(/^digraph/, content)
+          assert_match(/rankdir=LR;/, content)
+          assert content.end_with?("}\n")
+          assert_match(/#{attribute_name} flow/, content)
+        end
+      end
+
+      it "includes only states from that specific flow in each diagram" do
+        dot = Circulator::Dot.new(Sampler)
+        result = dot.generate_separate
+
+        # Status flow should have status states but not priority states
+        assert_match(/pending/, result[:status])
+        assert_match(/approved/, result[:status])
+        refute_match(/normal/, result[:status])
+        refute_match(/critical/, result[:status])
+
+        # Priority flow should have priority states but not status states
+        assert_match(/normal/, result[:priority])
+        assert_match(/critical/, result[:priority])
+        refute_match(/pending/, result[:priority])
+        refute_match(/approved/, result[:priority])
+      end
+
+      it "does not use prefixed state names in separate diagrams" do
+        dot = Circulator::Dot.new(Sampler)
+        result = dot.generate_separate
+
+        # Separate diagrams should use clean state names without prefixes
+        assert_match(/pending \[shape=circle\];/, result[:status])
+        refute_match(/status_pending/, result[:status])
       end
     end
 
@@ -173,24 +264,24 @@ class CirculatorDotTest < Minitest::Test
         dot = Circulator::Dot.new(Sampler)
         result = dot.generate
 
-        # Should output "nil" for nil state
-        assert_match(/nil \[shape=circle\];/, result)
+        # Should output "nil" for nil state (with prefix)
+        assert_match(/workflow_state_nil \[label="nil", shape=circle\];/, result)
       end
 
       it "covers nil from_state in transition output" do
         dot = Circulator::Dot.new(Sampler)
         result = dot.generate
 
-        # Should output "nil" as from state in transition
-        assert_match(/nil -> in_progress/, result)
+        # Should output "nil" as from state in transition (with prefix)
+        assert_match(/workflow_state_nil -> workflow_state_in_progress/, result)
       end
 
       it "covers nil to_state in transition output" do
         dot = Circulator::Dot.new(Sampler)
         result = dot.generate
 
-        # Should output "nil" as to state in transition (reset action)
-        assert_match(/completed -> nil/, result)
+        # Should output "nil" as to state in transition (reset action, with prefix)
+        assert_match(/workflow_state_completed -> workflow_state_nil/, result)
       end
 
       it "covers non-callable to state without allow_if" do
@@ -198,8 +289,8 @@ class CirculatorDotTest < Minitest::Test
         result = dot.generate
 
         # Label should be just the action name without "(conditional)" for most transitions
-        assert_match(/pending -> approved \[label="approve"\];/, result)
-        assert_match(/approved -> published \[label="publish"\];/, result)
+        assert_match(/status_pending -> status_approved \[label="approve"\];/, result)
+        assert_match(/status_approved -> status_published \[label="publish"\];/, result)
       end
 
       it "covers flows.empty? branch in initialize" do

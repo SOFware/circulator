@@ -6,6 +6,49 @@ module Circulator
   class Dot < Diagram
     private
 
+    def flows_output(flows_data, output)
+      if flows_data.size == 1
+        # Single flow: no grouping needed
+        flow = flows_data.first
+        states_output(flow[:states], output)
+        transitions_output(flow[:transitions], output)
+      else
+        # Multiple flows: use subgraph clusters
+        flows_data.each_with_index do |flow, index|
+          output << ""
+          output << "  subgraph cluster_#{index} {"
+          output << "    label=\":#{flow[:attribute_name]}\";"
+          output << "    style=dashed;"
+          output << "    color=blue;"
+          output << ""
+
+          # Output states within this cluster
+          flow[:states].sort_by(&:to_s).each do |state|
+            state_label = state.nil? ? "nil" : state.to_s
+            # Prefix state names with attribute to avoid conflicts
+            prefixed_name = "#{flow[:attribute_name]}_#{state_label}"
+            output << "    #{prefixed_name} [label=\"#{state_label}\", shape=circle];"
+          end
+
+          output << "  }"
+        end
+
+        # Output all transitions after clusters
+        output << ""
+        output << "  // Transitions"
+        flows_data.each do |flow|
+          flow[:transitions].sort_by { |t| [t[:from].to_s, t[:to].to_s, t[:label]] }.each do |transition|
+            from_label = transition[:from].nil? ? "nil" : transition[:from].to_s
+            to_label = transition[:to].nil? ? "nil" : transition[:to].to_s
+            # Use prefixed names
+            prefixed_from = "#{flow[:attribute_name]}_#{from_label}"
+            prefixed_to = "#{flow[:attribute_name]}_#{to_label}"
+            output << "  #{prefixed_from} -> #{prefixed_to} [label=\"#{transition[:label]}\"];"
+          end
+        end
+      end
+    end
+
     # def graph_name
     #   # Use the model class name if available, otherwise use the model key
     #   class_name = @model_class.name
@@ -41,6 +84,14 @@ module Circulator
     def header
       <<~DOT
         digraph "#{graph_name}" {
+          rankdir=LR;
+      DOT
+    end
+
+    def header_for_attribute(attribute_name)
+      class_name = @model_class.name || "diagram"
+      <<~DOT
+        digraph "#{class_name} :#{attribute_name} flow" {
           rankdir=LR;
       DOT
     end
