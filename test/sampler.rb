@@ -150,6 +150,61 @@ class SamplerManager
   end
 end
 
+# Class demonstrating nested state dependencies with hash-based allow_if
+class NestedDependencySampler
+  extend Circulator
+
+  attr_accessor :document_status, :review_status, :approval_count
+
+  def initialize
+    @approval_count = 0
+  end
+
+  # Review flow must be completed before document can be published
+  flow :review_status do
+    state :pending do
+      action :start_review, to: :in_review
+    end
+
+    state :in_review do
+      action :approve, to: :approved
+      action :reject, to: :rejected
+    end
+
+    state :rejected do
+      action :revise, to: :pending
+    end
+
+    state :approved do
+      action :finalize, to: :final
+    end
+  end
+
+  # Document status depends on review status
+  flow :document_status do
+    state :draft do
+      action :submit, to: :submitted
+    end
+
+    state :submitted do
+      # Can only publish if review is approved or final
+      action :publish, to: :published, allow_if: {review_status: [:approved, :final]} do
+        @approval_count += 1
+      end
+      # Can reject document anytime
+      action :reject, to: :rejected
+    end
+
+    state :published do
+      action :unpublish, to: :draft
+    end
+
+    state :rejected do
+      action :resubmit, to: :draft
+    end
+  end
+end
+
 # Class for testing empty flows error condition
 # This class extends Circulator but has no flows defined
 class EmptyFlowsSampler

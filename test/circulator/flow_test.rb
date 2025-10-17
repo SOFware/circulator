@@ -1553,4 +1553,250 @@ class CirculatorFlowTest < Minitest::Test
       assert_equal :done, task.status
     end
   end
+
+  describe "hash-based allow_if validation" do
+    it "raises error when allow_if is not a Proc or Hash" do
+      error = assert_raises(ArgumentError) do
+        Class.new do
+          extend Circulator
+
+          attr_accessor :status, :priority
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: "invalid"
+            end
+          end
+        end
+      end
+
+      assert_match(/allow_if must be a Proc or Hash/, error.message)
+    end
+
+    it "raises error when hash-based allow_if references undefined attribute" do
+      error = assert_raises(ArgumentError) do
+        Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: {priority: [:high]}
+            end
+          end
+        end
+      end
+
+      assert_match(/allow_if references undefined flow attribute/, error.message)
+      assert_match(/:priority/, error.message)
+    end
+
+    it "raises error when hash-based allow_if references invalid states" do
+      error = assert_raises(ArgumentError) do
+        Class.new do
+          extend Circulator
+
+          attr_accessor :status, :priority
+
+          circulator :priority do
+            state :low do
+              action :escalate, to: :high
+            end
+
+            state :high do
+              action :critical, to: :critical
+            end
+          end
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: {priority: [:urgent, :critical]}
+            end
+          end
+        end
+      end
+
+      assert_match(/allow_if references invalid states/, error.message)
+      assert_match(/:urgent/, error.message)
+      assert_match(/Valid states:/, error.message)
+    end
+
+    it "accepts hash with valid attribute and states" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status, :priority
+
+        circulator :priority do
+          state :low do
+            action :escalate, to: :high
+          end
+
+          state :high do
+            action :escalate, to: :critical
+          end
+        end
+
+        circulator :status do
+          state :pending do
+            action :approve, to: :approved, allow_if: {priority: [:high, :critical]}
+          end
+        end
+      end
+
+      # Should not raise an error
+      instance = klass.new
+      assert_respond_to instance, :status_approve
+    end
+
+    it "raises error when hash has more than one key" do
+      error = assert_raises(ArgumentError) do
+        Class.new do
+          extend Circulator
+
+          attr_accessor :status, :priority, :approval
+
+          circulator :priority do
+            state :high do
+            end
+          end
+
+          circulator :approval do
+            state :yes do
+            end
+          end
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: {priority: [:high], approval: [:yes]}
+            end
+          end
+        end
+      end
+
+      assert_match(/allow_if hash must contain exactly one attribute/, error.message)
+    end
+  end
+
+  describe "hash-based allow_if runtime evaluation" do
+    it "allows transition when dependency state matches" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status, :priority
+
+        circulator :priority do
+          state :low do
+            action :escalate, to: :high
+          end
+
+          state :high do
+            action :escalate, to: :critical
+          end
+        end
+
+        circulator :status do
+          state :pending do
+            action :approve, to: :approved, allow_if: {priority: [:high, :critical]}
+          end
+        end
+      end
+
+      instance = klass.new
+      instance.status = :pending
+      instance.priority = :high
+
+      instance.status_approve
+      assert_equal :approved, instance.status
+    end
+
+    it "blocks transition when dependency state doesn't match" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status, :priority
+
+        circulator :priority do
+          state :low do
+            action :escalate, to: :high
+          end
+
+          state :high do
+            action :escalate, to: :critical
+          end
+        end
+
+        circulator :status do
+          state :pending do
+            action :approve, to: :approved, allow_if: {priority: [:high, :critical]}
+          end
+        end
+      end
+
+      instance = klass.new
+      instance.status = :pending
+      instance.priority = :low
+
+      instance.status_approve
+      assert_equal :pending, instance.status
+    end
+
+    it "handles string states in runtime evaluation" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status, :priority
+
+        circulator :priority do
+          state :low do
+            action :escalate, to: :high
+          end
+
+          state :high do
+          end
+        end
+
+        circulator :status do
+          state :pending do
+            action :approve, to: :approved, allow_if: {priority: [:high]}
+          end
+        end
+      end
+
+      instance = klass.new
+      instance.status = :pending
+      instance.priority = "high"  # String instead of symbol
+
+      instance.status_approve
+      assert_equal :approved, instance.status
+    end
+
+    it "works with from: option and hash-based allow_if" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status, :priority
+
+        circulator :priority do
+          state :low do
+          end
+
+          state :high do
+          end
+        end
+
+        circulator :status do
+          action :approve, to: :approved, from: :pending, allow_if: {priority: [:high]}
+        end
+      end
+
+      instance = klass.new
+      instance.status = :pending
+      instance.priority = :high
+
+      instance.status_approve
+      assert_equal :approved, instance.status
+    end
+  end
 end

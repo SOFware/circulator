@@ -129,7 +129,7 @@ module Circulator
     @flows ||= {}
     model_key = Circulator.model_key(model)
     @flows[model_key] ||= {}
-    @flows[model_key][attribute_name] = Flow.new(model, attribute_name, &block)
+    @flows[model_key][attribute_name] = Flow.new(self, attribute_name, &block)
 
     flow_module = ancestors.find { |ancestor|
       ancestor.name.to_s =~ /FlowMethods/
@@ -170,7 +170,23 @@ module Circulator
       end
 
       if transition[:allow_if]
-        return unless flow_target.instance_exec(*args, **kwargs, &transition[:allow_if])
+        # Handle hash-based allow_if (checking other attribute states)
+        if transition[:allow_if].is_a?(Hash)
+          attribute_name_to_check, valid_states = transition[:allow_if].first
+          current_state = flow_target.send(attribute_name_to_check)
+
+          # Convert current state to symbol if possible
+          current_state = current_state.to_sym if current_state.respond_to?(:to_sym)
+
+          # Convert valid_states to array of symbols
+          valid_states_array = Array(valid_states).map { |s| s.respond_to?(:to_sym) ? s.to_sym : s }
+
+          # Return early if current state is not in the valid states
+          return unless valid_states_array.include?(current_state)
+        else
+          # Handle proc-based allow_if (original behavior)
+          return unless flow_target.instance_exec(*args, **kwargs, &transition[:allow_if])
+        end
       end
 
       if transition[:block]
