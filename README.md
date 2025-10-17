@@ -8,6 +8,7 @@ A lightweight and flexible state machine implementation for Ruby that allows you
 - **Flexible DSL**: Intuitive syntax for defining states and transitions
 - **Dynamic Method Generation**: Automatically creates helper methods for state transitions
 - **Conditional Transitions**: Support for guards and conditional logic
+- **Nested State Dependencies**: State machines can depend on the state of other attributes
 - **Transition Callbacks**: Execute code before, during, or after transitions
 - **Multiple State Machines**: Define multiple independent state machines per class
 - **Framework Agnostic**: Works with plain Ruby objects, no Rails or ActiveRecord required
@@ -91,6 +92,43 @@ class Document
     end
   end
 end
+```
+
+#### Nested State Dependencies
+
+You can make one state machine depend on another using hash-based `allow_if`:
+
+```ruby
+class Document
+  extend Circulator
+
+  attr_accessor :status, :review_status
+
+  # Review must be completed first
+  flow :review_status do
+    state :pending do
+      action :approve, to: :approved
+    end
+    state :approved
+  end
+
+  # Document status depends on review status
+  flow :status do
+    state :draft do
+      # Can only publish if review is approved
+      action :publish, to: :published, allow_if: {review_status: [:approved]}
+    end
+  end
+end
+
+doc = Document.new
+doc.status = :draft
+doc.review_status = :pending
+
+doc.status_publish  # => blocked, status remains :draft
+
+doc.review_status_approve  # => :approved
+doc.status_publish         # => :published ✓
 ```
 
 #### Dynamic Destination States

@@ -428,4 +428,122 @@ class SamplerTest < Minitest::Test
       assert_equal :completed, sampler.workflow_state
     end
   end
+
+  describe "NestedDependencySampler hash-based allow_if" do
+    let(:nested_sampler) { NestedDependencySampler.new }
+
+    it "blocks publish when review is not approved" do
+      nested_sampler.document_status = :submitted
+      nested_sampler.review_status = :pending
+
+      nested_sampler.document_status_publish
+      assert_equal :submitted, nested_sampler.document_status
+      assert_equal 0, nested_sampler.approval_count
+    end
+
+    it "blocks publish when review is in progress" do
+      nested_sampler.document_status = :submitted
+      nested_sampler.review_status = :in_review
+
+      nested_sampler.document_status_publish
+      assert_equal :submitted, nested_sampler.document_status
+      assert_equal 0, nested_sampler.approval_count
+    end
+
+    it "blocks publish when review is rejected" do
+      nested_sampler.document_status = :submitted
+      nested_sampler.review_status = :rejected
+
+      nested_sampler.document_status_publish
+      assert_equal :submitted, nested_sampler.document_status
+      assert_equal 0, nested_sampler.approval_count
+    end
+
+    it "allows publish when review is approved" do
+      nested_sampler.document_status = :submitted
+      nested_sampler.review_status = :approved
+
+      nested_sampler.document_status_publish
+      assert_equal :published, nested_sampler.document_status
+      assert_equal 1, nested_sampler.approval_count
+    end
+
+    it "allows publish when review is final" do
+      nested_sampler.document_status = :submitted
+      nested_sampler.review_status = :final
+
+      nested_sampler.document_status_publish
+      assert_equal :published, nested_sampler.document_status
+      assert_equal 1, nested_sampler.approval_count
+    end
+
+    it "executes full workflow with dependencies" do
+      # Start with draft document
+      nested_sampler.document_status = :draft
+      nested_sampler.review_status = :pending
+
+      # Submit document
+      nested_sampler.document_status_submit
+      assert_equal :submitted, nested_sampler.document_status
+
+      # Try to publish before review - should fail
+      nested_sampler.document_status_publish
+      assert_equal :submitted, nested_sampler.document_status
+      assert_equal 0, nested_sampler.approval_count
+
+      # Start review
+      nested_sampler.review_status_start_review
+      assert_equal :in_review, nested_sampler.review_status
+
+      # Try to publish during review - should fail
+      nested_sampler.document_status_publish
+      assert_equal :submitted, nested_sampler.document_status
+
+      # Approve review
+      nested_sampler.review_status_approve
+      assert_equal :approved, nested_sampler.review_status
+
+      # Now publish should work
+      nested_sampler.document_status_publish
+      assert_equal :published, nested_sampler.document_status
+      assert_equal 1, nested_sampler.approval_count
+    end
+
+    it "handles rejection and resubmission workflow" do
+      # Submit document
+      nested_sampler.document_status = :submitted
+      nested_sampler.review_status = :in_review
+
+      # Reject review
+      nested_sampler.review_status_reject
+      assert_equal :rejected, nested_sampler.review_status
+
+      # Can't publish with rejected review
+      nested_sampler.document_status_publish
+      assert_equal :submitted, nested_sampler.document_status
+
+      # Revise review
+      nested_sampler.review_status_revise
+      assert_equal :pending, nested_sampler.review_status
+
+      # Start review again
+      nested_sampler.review_status_start_review
+      nested_sampler.review_status_approve
+      nested_sampler.review_status_finalize
+      assert_equal :final, nested_sampler.review_status
+
+      # Now can publish
+      nested_sampler.document_status_publish
+      assert_equal :published, nested_sampler.document_status
+    end
+
+    it "handles string state values in dependency check" do
+      nested_sampler.document_status = :submitted
+      nested_sampler.review_status = "approved"  # String instead of symbol
+
+      nested_sampler.document_status_publish
+      assert_equal :published, nested_sampler.document_status
+      assert_equal 1, nested_sampler.approval_count
+    end
+  end
 end
