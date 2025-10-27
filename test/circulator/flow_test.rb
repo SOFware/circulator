@@ -1149,6 +1149,37 @@ class CirculatorFlowTest < Minitest::Test
         refute no_action_nil_object.no_action_called
         assert_nil no_action_nil_object.status
       end
+
+      it "uses action_allowed with nil as from state" do
+        # Test action_allowed with from: nil parameter
+        flow = Circulator::Flow.new("TestClass", :status) do
+          # Define action from nil state
+          action :initialize, to: :pending, from: nil
+          # Set action_allowed condition for nil state
+          action_allowed(:initialize, from: nil) { true }
+        end
+
+        # Verify the transition map was set up correctly
+        assert flow.transition_map[:initialize]
+        assert flow.transition_map[:initialize][nil]
+        assert flow.transition_map[:initialize][nil][:allow_if]
+      end
+
+      it "uses action_allowed within nil state block" do
+        # Test action_allowed within a nil state block
+        flow = Circulator::Flow.new("TestClass", :status) do
+          state nil do
+            action :start, to: :pending
+            # This processes nil as the current state
+            action_allowed(:start) { true }
+          end
+        end
+
+        # Verify the transition map
+        assert flow.transition_map[:start]
+        assert flow.transition_map[:start][nil]
+        assert flow.transition_map[:start][nil][:allow_if]
+      end
     end
 
     describe "block passing behavior" do
