@@ -349,6 +349,100 @@ class CirculatorFlowTest < Minitest::Test
       end
     end
 
+    describe "state predicate methods" do
+      it "creates predicate methods for all defined states" do
+        assert_includes flow_object.methods, :status_pending?
+        assert_includes flow_object.methods, :status_approved?
+        assert_includes flow_object.methods, :status_rejected?
+        assert_includes flow_object.methods, :status_published?
+        assert_includes flow_object.methods, :status_archived?
+        assert_includes flow_object.methods, :status_on_hold?
+        assert_includes flow_object.methods, :status_override_archive?
+      end
+
+      it "returns true when state matches current value" do
+        flow_object.status = :pending
+        assert flow_object.status_pending?
+        refute flow_object.status_approved?
+        refute flow_object.status_rejected?
+      end
+
+      it "returns false when state does not match current value" do
+        flow_object.status = :approved
+        refute flow_object.status_pending?
+        assert flow_object.status_approved?
+        refute flow_object.status_rejected?
+      end
+
+      it "works with string values" do
+        flow_object.status = "pending"
+        assert flow_object.status_pending?
+        refute flow_object.status_approved?
+      end
+
+      it "does not create predicate method for nil state" do
+        nil_state_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          circulator :status do
+            state nil do
+              action :initialize, to: :pending
+            end
+            state :pending do
+              action :clear, to: nil
+            end
+          end
+        end
+
+        nil_state_object = nil_state_class.new
+        nil_state_object.status = nil
+
+        # Should not create a method for nil state
+        refute_includes nil_state_object.methods, :status_?
+        # But should create method for pending state
+        assert_includes nil_state_object.methods, :status_pending?
+        refute nil_state_object.status_pending?
+      end
+
+      it "skips creating predicate method if it already exists" do
+        skip_method_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          # First flow defines state
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved
+            end
+          end
+
+          # Second flow with same attribute and same state
+          # Should skip creating status_pending? since it already exists
+          circulator :status do
+            state :pending do
+              action :complete, to: :done
+            end
+            state :approved do
+              action :finalize, to: :finalized
+            end
+          end
+        end
+
+        skip_method_object = skip_method_class.new
+        skip_method_object.status = :pending
+
+        # Should use the predicate method (doesn't matter which flow created it)
+        assert skip_method_object.status_pending?
+
+        # Should also have predicate for approved state
+        skip_method_object.status = :approved
+        assert skip_method_object.status_approved?
+      end
+    end
+
     describe "no_action behavior" do
       let(:no_action_flow_class) do
         Class.new do
@@ -1797,6 +1891,96 @@ class CirculatorFlowTest < Minitest::Test
 
       instance.status_approve
       assert_equal :approved, instance.status
+    end
+
+    it "handles hash-based allow_if with non-symbol state values" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status, :priority
+
+        circulator :priority do
+          state :low do
+          end
+
+          state :high do
+          end
+        end
+
+        circulator :status do
+          state :pending do
+            action :approve, to: :approved, allow_if: {priority: [:high]}
+          end
+        end
+      end
+
+      instance = klass.new
+      instance.status = :pending
+
+      # Test with integer priority (doesn't respond to :to_sym)
+      instance.priority = 1
+      instance.status_approve
+      assert_equal :pending, instance.status
+
+      # Test with string priority
+      instance.priority = "high"
+      instance.status_approve
+      assert_equal :approved, instance.status
+    end
+
+    it "handles hash-based allow_if with non-symbol valid states" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status, :level
+
+        circulator :level do
+          state :basic do
+          end
+
+          state :advanced do
+          end
+
+          state "premium" do
+          end
+
+          state 99 do
+          end
+        end
+
+        circulator :status do
+          state :pending do
+            # Use symbols, strings, and integers in the valid_states array
+            action :process, to: :processed, allow_if: {level: [:advanced, "premium", 99]}
+          end
+        end
+      end
+
+      instance = klass.new
+      instance.status = :pending
+
+      # Test with symbol level
+      instance.level = :advanced
+      instance.status_process
+      assert_equal :processed, instance.status
+
+      # Test with string level that's in valid_states
+      instance.status = :pending
+      instance.level = "premium"
+      instance.status_process
+      assert_equal :processed, instance.status
+
+      # Test with integer level that's in valid_states (doesn't respond to to_sym)
+      instance.status = :pending
+      instance.level = 99
+      instance.status_process
+      assert_equal :processed, instance.status
+
+      # Test with level not in valid_states
+      instance.status = :pending
+      instance.level = :basic
+      instance.status_process
+      assert_equal :pending, instance.status
     end
   end
 end

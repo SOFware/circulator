@@ -145,11 +145,37 @@ module Circulator
       Circulator.methodize_name(model)
     end
 
+    states = Set.new
     @flows.dig(model_key, attribute_name).transition_map.each do |action, transitions|
+      transitions.each do |from_state, transition_data|
+        states.add(from_state)
+        # Add the 'to' state if it's not a callable
+        unless transition_data[:to].respond_to?(:call)
+          states.add(transition_data[:to])
+        end
+      end
       define_flow_method(attribute_name:, action:, transitions:, object:, owner: flow_module)
+    end
+
+    # Define predicate methods for each state (skip nil)
+    states.each do |state|
+      next if state.nil?
+      define_state_method(attribute_name:, state:, object:, owner: flow_module)
     end
   end
   alias_method :circulator, :flow
+
+  def define_state_method(attribute_name:, state:, object:, owner:)
+    object_attribute_method = [object, attribute_name, state].compact.join("_") << "?"
+    return if owner.method_defined?(object_attribute_method)
+
+    owner.define_method(object_attribute_method) do
+      current_value = send(attribute_name)
+      # Convert to symbol for comparison if possible
+      current_value = current_value.to_sym if current_value.respond_to?(:to_sym)
+      current_value == state
+    end
+  end
 
   def define_flow_method(attribute_name:, action:, transitions:, object:, owner:)
     object_attribute_method = [object, attribute_name, action].compact.join("_")
