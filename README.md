@@ -6,7 +6,7 @@ A lightweight and flexible state machine implementation for Ruby that allows you
 
 - **Lightweight**: Minimal dependencies and simple implementation
 - **Flexible DSL**: Intuitive syntax for defining states and transitions
-- **Dynamic Method Generation**: Automatically creates helper methods for state transitions
+- **Dynamic Method Generation**: Automatically creates action methods for transitions and predicate methods for state checks
 - **Conditional Transitions**: Support for guards and conditional logic
 - **Nested State Dependencies**: State machines can depend on the state of other attributes
 - **Transition Callbacks**: Execute code before, during, or after transitions
@@ -71,6 +71,37 @@ order.status_process  # => :processing
 order.status_ship     # => :shipped
 order.status_deliver  # => :delivered
 ```
+
+### Generated Methods
+
+Circulator automatically generates two types of helper methods for your state machines:
+
+#### Action Methods
+
+For each action defined in your state machine, Circulator creates a method that performs the transition:
+
+```ruby
+order.status_process  # Transitions from :pending to :processing
+order.status_cancel   # Transitions to :cancelled
+```
+
+#### State Predicate Methods
+
+For each state in your state machine, Circulator creates a predicate method to check the current state:
+
+```ruby
+order.status = :pending
+
+order.status_pending?     # => true
+order.status_processing?  # => false
+order.status_shipped?     # => false
+
+order.status_process
+order.status_processing?  # => true
+order.status_pending?     # => false
+```
+
+These predicate methods work with both symbol and string values, automatically converting strings to symbols for comparison.
 
 ### Advanced Features
 
@@ -227,7 +258,7 @@ Circulator distinguishes itself from other Ruby state machine libraries through 
 - **Minimal Magic**: Unlike AASM and state_machines, Circulator uses straightforward Ruby metaprogramming without complex DSL magic
 - **No Dependencies**: Works with plain Ruby objects without requiring Rails, ActiveRecord, or other frameworks
 - **Lightweight**: Smaller footprint compared to feature-heavy alternatives
-- **Clear Method Names**: Generated methods follow predictable naming patterns (`status_approve`, `priority_escalate`)
+- **Clear Method Names**: Generated methods follow predictable naming patterns (`status_approve`, `status_pending?`)
 - **Flexible Architecture**: Easy to extend and customize for specific needs
 
 ### When to Use Circulator
