@@ -83,9 +83,9 @@ module Circulator
     private
 
     def validate_allow_if(allow_if)
-      # Must be either a Proc or a Hash
-      unless allow_if.is_a?(Proc) || allow_if.is_a?(Hash)
-        raise ArgumentError, "allow_if must be a Proc or Hash, got: #{allow_if.class}"
+      # Must be either a Proc, Hash, or Symbol
+      unless allow_if.is_a?(Proc) || allow_if.is_a?(Hash) || allow_if.is_a?(Symbol)
+        raise ArgumentError, "allow_if must be a Proc, Hash, or Symbol, got: #{allow_if.class}"
       end
 
       # If it's a Hash, validate the structure
