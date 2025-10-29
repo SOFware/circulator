@@ -232,26 +232,21 @@ class CirculatorFlowTest < Minitest::Test
         assert_equal :premium, symbol_allow_if_object.status
       end
 
-      it "raises NoMethodError when method doesn't exist" do
-        missing_method_class = Class.new do
-          extend Circulator
+      it "raises ArgumentError when method doesn't exist" do
+        error = assert_raises(ArgumentError) do
+          Class.new do
+            extend Circulator
 
-          attr_accessor :status
+            attr_accessor :status
 
-          circulator :status do
-            state :pending do
-              action :process, to: :processed, allow_if: :nonexistent_method?
+            circulator :status do
+              state :pending do
+                action :process, to: :processed, allow_if: :nonexistent_method?
+              end
             end
           end
         end
-
-        missing_method_object = missing_method_class.new
-        missing_method_object.status = :pending
-
-        error = assert_raises(NoMethodError) do
-          missing_method_object.status_process
-        end
-        assert_match(/undefined method `nonexistent_method\?'/, error.message)
+        assert_match(/allow_if references undefined method :nonexistent_method\?/, error.message)
       end
 
       it "works with transition blocks" do

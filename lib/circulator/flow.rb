@@ -83,14 +83,21 @@ module Circulator
     private
 
     def validate_allow_if(allow_if)
-      # Must be either a Proc, Hash, or Symbol
-      unless allow_if.is_a?(Proc) || allow_if.is_a?(Hash) || allow_if.is_a?(Symbol)
+      case allow_if
+      in Proc
+        # Valid, no additional validation needed
+      in Symbol
+        validate_symbol_allow_if(allow_if)
+      in Hash
+        validate_hash_allow_if(allow_if)
+      else
         raise ArgumentError, "allow_if must be a Proc, Hash, or Symbol, got: #{allow_if.class}"
       end
+    end
 
-      # If it's a Hash, validate the structure
-      if allow_if.is_a?(Hash)
-        validate_hash_allow_if(allow_if)
+    def validate_symbol_allow_if(method_name)
+      unless @klass.method_defined?(method_name)
+        raise ArgumentError, "allow_if references undefined method :#{method_name} on #{@klass}"
       end
     end
 
