@@ -209,6 +209,9 @@ module Circulator
 
           # Return early if current state is not in the valid states
           return unless valid_states_array.include?(current_state)
+        elsif transition[:allow_if].is_a?(Symbol)
+          # Handle symbol-based allow_if (method name)
+          return unless flow_target.send(transition[:allow_if])
         else
           # Handle proc-based allow_if (original behavior)
           return unless flow_target.instance_exec(*args, **kwargs, &transition[:allow_if])

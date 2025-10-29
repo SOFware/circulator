@@ -107,6 +107,10 @@ These predicate methods work with both symbol and string values, automatically c
 
 #### Conditional Transitions with Guards
 
+You can control when transitions are allowed using the `allow_if` option. Circulator supports three types of guards:
+
+**Proc-based guards** evaluate a block of code:
+
 ```ruby
 class Document
   extend Circulator
@@ -125,7 +129,29 @@ class Document
 end
 ```
 
-#### Nested State Dependencies
+**Symbol-based guards** call a method on the object:
+
+```ruby
+class Document
+  extend Circulator
+
+  attr_accessor :state, :reviewed_by
+
+  circulator :state do
+    state :draft do
+      action :publish, to: :published, allow_if: :ready_to_publish?
+    end
+  end
+
+  def ready_to_publish?
+    reviewed_by.present?
+  end
+end
+```
+
+This is equivalent to the proc-based approach but cleaner when you have a dedicated method for the condition.
+
+**Hash-based guards** check the state of another attribute:
 
 You can make one state machine depend on another using hash-based `allow_if`:
 

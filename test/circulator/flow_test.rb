@@ -161,6 +161,161 @@ class CirculatorFlowTest < Minitest::Test
       end
     end
 
+    describe "symbol-based allow_if" do
+      let(:symbol_allow_if_class) do
+        Class.new do
+          extend Circulator
+
+          attr_accessor :status, :active, :premium_user
+
+          def active?
+            @active == true
+          end
+
+          def premium?
+            @premium_user == true
+          end
+
+          circulator :status do
+            state :pending do
+              action :activate, to: :active, allow_if: :active?
+              action :upgrade, to: :premium, allow_if: :premium?
+            end
+
+            state :active do
+              action :deactivate, to: :inactive
+            end
+
+            state :premium
+            state :inactive
+          end
+        end
+      end
+
+      let(:symbol_allow_if_object) { symbol_allow_if_class.new }
+
+      it "allows transition when symbol method returns true" do
+        symbol_allow_if_object.status = :pending
+        symbol_allow_if_object.active = true
+
+        symbol_allow_if_object.status_activate
+        assert_equal :active, symbol_allow_if_object.status
+      end
+
+      it "prevents transition when symbol method returns false" do
+        symbol_allow_if_object.status = :pending
+        symbol_allow_if_object.active = false
+
+        symbol_allow_if_object.status_activate
+        assert_equal :pending, symbol_allow_if_object.status
+      end
+
+      it "prevents transition when symbol method returns nil" do
+        symbol_allow_if_object.status = :pending
+        symbol_allow_if_object.active = nil
+
+        symbol_allow_if_object.status_activate
+        assert_equal :pending, symbol_allow_if_object.status
+      end
+
+      it "works with multiple symbol-based allow_if conditions" do
+        symbol_allow_if_object.status = :pending
+
+        # First action requires active? to be true
+        symbol_allow_if_object.active = false
+        symbol_allow_if_object.status_activate
+        assert_equal :pending, symbol_allow_if_object.status
+
+        # Second action requires premium? to be true
+        symbol_allow_if_object.premium_user = true
+        symbol_allow_if_object.status_upgrade
+        assert_equal :premium, symbol_allow_if_object.status
+      end
+
+      it "raises ArgumentError when method doesn't exist" do
+        error = assert_raises(ArgumentError) do
+          Class.new do
+            extend Circulator
+
+            attr_accessor :status
+
+            circulator :status do
+              state :pending do
+                action :process, to: :processed, allow_if: :nonexistent_method?
+              end
+            end
+          end
+        end
+        assert_match(/allow_if references undefined method :nonexistent_method\?/, error.message)
+      end
+
+      it "works with transition blocks" do
+        block_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status, :activated_count
+
+          def initialize
+            @activated_count = 0
+          end
+
+          def active?
+            true
+          end
+
+          circulator :status do
+            state :pending do
+              action :activate, to: :active, allow_if: :active? do
+                @activated_count += 1
+              end
+            end
+          end
+        end
+
+        block_object = block_class.new
+        block_object.status = :pending
+
+        block_object.status_activate
+        assert_equal :active, block_object.status
+        assert_equal 1, block_object.activated_count
+      end
+
+      it "is equivalent to proc-based allow_if" do
+        proc_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status, :active
+
+          def active?
+            @active == true
+          end
+
+          circulator :status do
+            state :pending do
+              action :activate, to: :active, allow_if: -> { active? }
+            end
+          end
+        end
+
+        # Test with symbol-based
+        symbol_allow_if_object.status = :pending
+        symbol_allow_if_object.active = true
+        symbol_allow_if_object.status_activate
+        symbol_result = symbol_allow_if_object.status
+
+        # Test with proc-based
+        proc_object = proc_class.new
+        proc_object.status = :pending
+        proc_object.active = true
+        proc_object.status_activate
+        proc_result = proc_object.status
+
+        # Both should have same result
+        assert_equal :active, symbol_result
+        assert_equal :active, proc_result
+      end
+    end
+
     describe "complex workflow scenarios" do
       it "handles complete approval workflow" do
         flow_object.status = :pending
@@ -1695,7 +1850,7 @@ class CirculatorFlowTest < Minitest::Test
         end
       end
 
-      assert_match(/allow_if must be a Proc or Hash/, error.message)
+      assert_match(/allow_if must be a Proc, Hash, or Symbol/, error.message)
     end
 
     it "raises error when hash-based allow_if references undefined attribute" do
