@@ -123,7 +123,7 @@ class CirculatorDotTest < Minitest::Test
 
         # Transitions should use prefixed state names
         assert_match(/status_pending -> status_approved/, result)
-        assert_match(/priority_normal -> priority_\?/, result)
+        assert_match(/priority_normal -> "priority_\?"/, result)
         assert_match(/workflow_state_nil -> workflow_state_in_progress/, result)
       end
 
@@ -141,7 +141,7 @@ class CirculatorDotTest < Minitest::Test
         result = dot.generate
 
         # Sampler has priority flow with callable to: options
-        assert_match(/priority_normal -> priority_\?/, result)
+        assert_match(/priority_normal -> "priority_\?"/, result)
         assert_match(/label="  escalate \(dynamic\)"/, result)
       end
 
@@ -299,6 +299,26 @@ class CirculatorDotTest < Minitest::Test
         end
 
         assert_match(/no flows defined/, error.message)
+      end
+
+      it "quotes node names with special characters" do
+        dot = Circulator::Dot.new(Sampler)
+        result = dot.generate
+
+        # The ? state should be quoted in both node declarations and transitions
+        assert_match(/"priority_\?" \[label="\?", shape=circle\];/, result)
+        assert_match(/priority_normal -> "priority_\?"/, result)
+        assert_match(/priority_critical -> "priority_\?"/, result)
+      end
+
+      it "does not quote node names with only alphanumeric and underscore characters" do
+        dot = Circulator::Dot.new(Sampler)
+        result = dot.generate
+
+        # Regular node names should not be quoted
+        assert_match(/status_pending \[label="pending", shape=circle\];/, result)
+        assert_match(/priority_normal \[label="normal", shape=circle\];/, result)
+        assert_match(/status_pending -> status_approved/, result)
       end
     end
   end
