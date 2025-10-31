@@ -6,6 +6,14 @@ module Circulator
   class Dot < Diagram
     private
 
+    def quote_node_name(name)
+      if name.end_with?("?")
+        "\"#{name}\""
+      else
+        name
+      end
+    end
+
     def flows_output(flows_data, output)
       if flows_data.size == 1
         # Single flow: no grouping needed
@@ -27,7 +35,8 @@ module Circulator
             state_label = state.nil? ? "nil" : state.to_s
             # Prefix state names with attribute to avoid conflicts
             prefixed_name = "#{flow[:attribute_name]}_#{state_label}"
-            output << "    #{prefixed_name} [label=\"#{state_label}\", shape=circle];"
+            quoted_name = quote_node_name(prefixed_name)
+            output << "    #{quoted_name} [label=\"#{state_label}\", shape=circle];"
           end
 
           output << "  }"
@@ -43,7 +52,9 @@ module Circulator
             # Use prefixed names
             prefixed_from = "#{flow[:attribute_name]}_#{from_label}"
             prefixed_to = "#{flow[:attribute_name]}_#{to_label}"
-            output << "  #{prefixed_from} -> #{prefixed_to} [label=\"#{transition[:label]}\"];"
+            quoted_from = quote_node_name(prefixed_from)
+            quoted_to = quote_node_name(prefixed_to)
+            output << "  #{quoted_from} -> #{quoted_to} [label=\"#{transition[:label]}\"];"
           end
         end
       end
@@ -67,7 +78,8 @@ module Circulator
       output << "  // States"
       states.sort_by { |s| s.to_s }.each do |state|
         state_label = state.nil? ? "nil" : state.to_s
-        output << "  #{state_label} [shape=circle];"
+        quoted_name = quote_node_name(state_label)
+        output << "  #{quoted_name} [shape=circle];"
       end
     end
 
@@ -77,7 +89,9 @@ module Circulator
       transitions.sort_by { |t| [t[:from].to_s, t[:to].to_s, t[:label]] }.each do |transition|
         from_label = transition[:from].nil? ? "nil" : transition[:from].to_s
         to_label = transition[:to].nil? ? "nil" : transition[:to].to_s
-        output << "  #{from_label} -> #{to_label} [label=\"#{transition[:label]}\"];"
+        quoted_from = quote_node_name(from_label)
+        quoted_to = quote_node_name(to_label)
+        output << "  #{quoted_from} -> #{quoted_to} [label=\"#{transition[:label]}\"];"
       end
     end
 
