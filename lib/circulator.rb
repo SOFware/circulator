@@ -277,10 +277,62 @@ module Circulator
       end
     end
 
+    # Get available actions for an attribute based on current state
+    #
+    # Example:
+    #
+    #   test_object.available_flows(:status)
+    #   # => [:approve, :reject]
+    def available_flows(attribute, *args, **kwargs)
+      model_key = Circulator.model_key(self)
+      flow = flows.dig(model_key, attribute)
+      return [] unless flow
+
+      current_value = send(attribute)
+      current_state = current_value.respond_to?(:to_sym) ? current_value.to_sym : current_value
+
+      flow.transition_map.select do |action, transitions|
+        transition = transitions[current_state]
+        next false unless transition
+
+        # Check allow_if condition if present
+        if transition[:allow_if]
+          check_allow_if(transition[:allow_if], *args, **kwargs)
+        else
+          true
+        end
+      end.keys
+    end
+
+    # Check if a specific action is available for an attribute
+    #
+    # Example:
+    #
+    #   test_object.available_flow?(:status, :approve)
+    #   # => true
+    def available_flow?(attribute, action, *args, **kwargs)
+      available_flows(attribute, *args, **kwargs).include?(action)
+    end
+
     private
 
     def flows
       self.class.flows
+    end
+
+    def check_allow_if(allow_if, *args, **kwargs)
+      case allow_if
+      when Hash
+        attribute_name, valid_states = allow_if.first
+        current_state = send(attribute_name)
+        current_state = current_state.to_sym if current_state.respond_to?(:to_sym)
+        valid_states_array = Array(valid_states).map { |s| s.respond_to?(:to_sym) ? s.to_sym : s }
+        valid_states_array.include?(current_state)
+      when Symbol
+        send(allow_if, *args, **kwargs)
+      else # Proc
+        instance_exec(*args, **kwargs, &allow_if)
+      end
     end
   end
 end

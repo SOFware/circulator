@@ -2168,5 +2168,379 @@ class CirculatorFlowTest < Minitest::Test
       instance.status_process
       assert_equal :pending, instance.status
     end
+
+    describe "available_flows" do
+      it "returns actions available from current state" do
+        basic_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved
+              action :reject, to: :rejected
+            end
+
+            state :approved do
+              action :archive, to: :archived
+            end
+
+            state :rejected
+            state :archived
+          end
+        end
+
+        object = basic_class.new
+        object.status = :pending
+
+        actions = object.available_flows(:status)
+        assert_equal [:approve, :reject].sort, actions.sort
+      end
+
+      it "returns empty array when no actions available" do
+        basic_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved
+            end
+
+            state :approved
+          end
+        end
+
+        object = basic_class.new
+        object.status = :approved
+
+        actions = object.available_flows(:status)
+        assert_equal [], actions
+      end
+
+      it "returns empty array for undefined attribute" do
+        basic_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved
+            end
+          end
+        end
+
+        object = basic_class.new
+        object.status = :pending
+
+        actions = object.available_flows(:nonexistent)
+        assert_equal [], actions
+      end
+
+      it "respects proc-based allow_if conditions" do
+        conditional_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status, :ready
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: -> { ready }
+              action :reject, to: :rejected
+            end
+          end
+        end
+
+        object = conditional_class.new
+        object.status = :pending
+        object.ready = false
+
+        actions = object.available_flows(:status)
+        assert_equal [:reject], actions
+
+        object.ready = true
+        actions = object.available_flows(:status)
+        assert_equal [:approve, :reject].sort, actions.sort
+      end
+
+      it "respects symbol-based allow_if conditions" do
+        symbol_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status, :ready
+
+          def ready?
+            ready
+          end
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: :ready?
+              action :reject, to: :rejected
+            end
+          end
+        end
+
+        object = symbol_class.new
+        object.status = :pending
+        object.ready = false
+
+        actions = object.available_flows(:status)
+        assert_equal [:reject], actions
+
+        object.ready = true
+        actions = object.available_flows(:status)
+        assert_equal [:approve, :reject].sort, actions.sort
+      end
+
+      it "respects hash-based allow_if conditions" do
+        hash_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status, :review_status
+
+          circulator :review_status do
+            state :pending do
+              action :approve_review, to: :approved
+            end
+
+            state :approved
+          end
+
+          circulator :status do
+            state :draft do
+              action :publish, to: :published, allow_if: {review_status: :approved}
+              action :submit, to: :submitted
+            end
+          end
+        end
+
+        object = hash_class.new
+        object.status = :draft
+        object.review_status = :pending
+
+        actions = object.available_flows(:status)
+        assert_equal [:submit], actions
+
+        object.review_status = :approved
+        actions = object.available_flows(:status)
+        assert_equal [:publish, :submit].sort, actions.sort
+      end
+
+      it "works with string attribute values" do
+        string_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved
+            end
+          end
+        end
+
+        object = string_class.new
+        object.status = "pending"
+
+        actions = object.available_flows(:status)
+        assert_equal [:approve], actions
+      end
+
+      it "passes arguments to proc-based allow_if" do
+        args_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: ->(min_level) { min_level >= 5 }
+              action :reject, to: :rejected
+            end
+          end
+        end
+
+        object = args_class.new
+        object.status = :pending
+
+        actions = object.available_flows(:status, 3)
+        assert_equal [:reject], actions
+
+        actions = object.available_flows(:status, 10)
+        assert_equal [:approve, :reject].sort, actions.sort
+      end
+
+      it "passes arguments to symbol-based allow_if" do
+        symbol_args_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          def can_approve?(min_level)
+            min_level >= 5
+          end
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: :can_approve?
+              action :reject, to: :rejected
+            end
+          end
+        end
+
+        object = symbol_args_class.new
+        object.status = :pending
+
+        actions = object.available_flows(:status, 3)
+        assert_equal [:reject], actions
+
+        actions = object.available_flows(:status, 10)
+        assert_equal [:approve, :reject].sort, actions.sort
+      end
+
+      it "passes keyword arguments to allow_if" do
+        kwargs_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          def can_approve?(level:, priority:)
+            level >= 5 && priority == :high
+          end
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: :can_approve?
+              action :reject, to: :rejected
+            end
+          end
+        end
+
+        object = kwargs_class.new
+        object.status = :pending
+
+        actions = object.available_flows(:status, level: 10, priority: :low)
+        assert_equal [:reject], actions
+
+        actions = object.available_flows(:status, level: 10, priority: :high)
+        assert_equal [:approve, :reject].sort, actions.sort
+      end
+    end
+
+    describe "available_flow?" do
+      it "returns true when action is available" do
+        basic_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved
+              action :reject, to: :rejected
+            end
+          end
+        end
+
+        object = basic_class.new
+        object.status = :pending
+
+        assert object.available_flow?(:status, :approve)
+        assert object.available_flow?(:status, :reject)
+      end
+
+      it "returns false when action is not available" do
+        basic_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved
+            end
+
+            state :approved do
+              action :archive, to: :archived
+            end
+          end
+        end
+
+        object = basic_class.new
+        object.status = :pending
+
+        assert object.available_flow?(:status, :approve)
+        refute object.available_flow?(:status, :archive)
+      end
+
+      it "returns false for undefined attribute" do
+        basic_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved
+            end
+          end
+        end
+
+        object = basic_class.new
+        object.status = :pending
+
+        refute object.available_flow?(:nonexistent, :approve)
+      end
+
+      it "respects allow_if conditions" do
+        conditional_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status, :ready
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: -> { ready }
+              action :reject, to: :rejected
+            end
+          end
+        end
+
+        object = conditional_class.new
+        object.status = :pending
+        object.ready = false
+
+        refute object.available_flow?(:status, :approve)
+        assert object.available_flow?(:status, :reject)
+
+        object.ready = true
+        assert object.available_flow?(:status, :approve)
+        assert object.available_flow?(:status, :reject)
+      end
+
+      it "passes arguments to allow_if" do
+        args_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: ->(min_level) { min_level >= 5 }
+            end
+          end
+        end
+
+        object = args_class.new
+        object.status = :pending
+
+        refute object.available_flow?(:status, :approve, 3)
+        assert object.available_flow?(:status, :approve, 10)
+      end
+    end
   end
 end
