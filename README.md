@@ -103,6 +103,28 @@ order.status_pending?     # => false
 
 These predicate methods work with both symbol and string values, automatically converting strings to symbols for comparison.
 
+#### Query Available Actions
+
+Circulator provides methods to query which actions are available from the current state:
+
+```ruby
+order.status = :pending
+
+# Get all available actions
+order.available_flows(:status)  # => [:approve, :reject]
+
+# Check if a specific action is available
+order.available_flow?(:status, :approve)  # => true
+order.available_flow?(:status, :ship)     # => false
+```
+
+These methods respect all `allow_if` conditions and can accept arguments to pass through to guard conditions:
+
+```ruby
+# With conditional guards
+order.available_flow?(:status, :approve, level: 5)  # => true
+```
+
 ### Advanced Features
 
 #### Conditional Transitions with Guards
