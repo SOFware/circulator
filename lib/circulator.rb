@@ -2,6 +2,30 @@ require "circulator/version"
 require "circulator/flow"
 
 module Circulator
+  # Global registry for extensions
+  @extensions = Hash.new { |h, k| h[k] = [] }
+
+  class << self
+    attr_reader :extensions
+
+    # Register an extension for a specific class and attribute
+    #
+    # Example:
+    #
+    #   Circulator.extension(:Document, :status) do
+    #     state :pending do
+    #       action :send_to_legal, to: :legal_review
+    #     end
+    #   end
+    #
+    # Extensions are automatically applied when the class defines its flow
+    def extension(class_name, attribute_name, &block)
+      raise ArgumentError, "Block required for extension" unless block_given?
+
+      key = "#{class_name}:#{attribute_name}"
+      @extensions[key] << block
+    end
+  end
   # Declare a flow for an attribute.
   #
   # Specify the attribute to be used for states and actions.
