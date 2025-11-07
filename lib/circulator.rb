@@ -5,8 +5,10 @@ module Circulator
   # Global registry for extensions
   @extensions = Hash.new { |h, k| h[k] = [] }
 
+  @default_flow_proc = ::Hash.method(:new)
   class << self
     attr_reader :extensions
+    attr_reader :default_flow_proc
 
     # Register an extension for a specific class and attribute
     #
@@ -149,11 +151,12 @@ module Circulator
   #  test_object.flow(:unknown, :status, "signal")
   #  # Will raise an UnhandledSignalError
   #
-  def flow(attribute_name, model: to_s, &block)
-    @flows ||= {}
+  def flow(attribute_name, model: to_s, flows_proc: Circulator.default_flow_proc, &block)
+    @flows ||= flows_proc.call
     model_key = Circulator.model_key(model)
     @flows[model_key] ||= {}
-    @flows[model_key][attribute_name] = Flow.new(self, attribute_name, &block)
+    # Pass the flows_proc to Flow so it can create transition_maps of the same type
+    @flows[model_key][attribute_name] = Flow.new(self, attribute_name, flows_proc:, &block)
 
     flow_module = ancestors.find { |ancestor|
       ancestor.name.to_s =~ /FlowMethods/
