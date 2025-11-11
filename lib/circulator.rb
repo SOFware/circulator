@@ -2,6 +2,32 @@ require "circulator/version"
 require "circulator/flow"
 
 module Circulator
+  # Global registry for extensions
+  @extensions = Hash.new { |h, k| h[k] = [] }
+
+  @default_flow_proc = ::Hash.method(:new)
+  class << self
+    attr_reader :extensions
+    attr_reader :default_flow_proc
+
+    # Register an extension for a specific class and attribute
+    #
+    # Example:
+    #
+    #   Circulator.extension(:Document, :status) do
+    #     state :pending do
+    #       action :send_to_legal, to: :legal_review
+    #     end
+    #   end
+    #
+    # Extensions are automatically applied when the class defines its flow
+    def extension(class_name, attribute_name, &block)
+      raise ArgumentError, "Block required for extension" unless block_given?
+
+      key = "#{class_name}:#{attribute_name}"
+      @extensions[key] << block
+    end
+  end
   # Declare a flow for an attribute.
   #
   # Specify the attribute to be used for states and actions.
@@ -125,11 +151,12 @@ module Circulator
   #  test_object.flow(:unknown, :status, "signal")
   #  # Will raise an UnhandledSignalError
   #
-  def flow(attribute_name, model: to_s, &block)
-    @flows ||= {}
+  def flow(attribute_name, model: to_s, flows_proc: Circulator.default_flow_proc, &block)
+    @flows ||= flows_proc.call
     model_key = Circulator.model_key(model)
     @flows[model_key] ||= {}
-    @flows[model_key][attribute_name] = Flow.new(self, attribute_name, &block)
+    # Pass the flows_proc to Flow so it can create transition_maps of the same type
+    @flows[model_key][attribute_name] = Flow.new(self, attribute_name, flows_proc:, &block)
 
     flow_module = ancestors.find { |ancestor|
       ancestor.name.to_s =~ /FlowMethods/

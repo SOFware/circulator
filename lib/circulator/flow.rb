@@ -2,13 +2,19 @@
 
 module Circulator
   class Flow
-    def initialize(klass, attribute_name, states = Set.new, &block)
+    def initialize(klass, attribute_name, states = Set.new, extension: false, flows_proc: Circulator.default_flow_proc, &block)
       @klass = klass
       @attribute_name = attribute_name
       @states = states
       @no_action = ->(attribute_name, action) { raise "No action found for the current state of #{attribute_name} (#{send(attribute_name)}): #{action}" }
-      @transition_map = {}
-      instance_eval(&block)
+      @flows_proc = flows_proc
+      @transition_map = flows_proc ? flows_proc.call : {}
+
+      # Execute the main flow block
+      instance_eval(&block) if block
+
+      # Apply any registered extensions (unless explicitly disabled)
+      apply_extensions unless extension
     end
     attr_reader :transition_map
 
@@ -130,6 +136,35 @@ module Circulator
       invalid_states = valid_states_array - referenced_states.to_a
       if invalid_states.any?
         raise ArgumentError, "allow_if references invalid states #{invalid_states.inspect} for :#{attribute_name}. Valid states: #{referenced_states.to_a.inspect}"
+      end
+    end
+
+    def apply_extensions
+      # Look up extensions for this class and attribute
+      # For Class objects, use the class name directly; for instances, use model_key
+      class_name = if @klass.is_a?(Class)
+        @klass.name || @klass.to_s
+      else
+        Circulator.model_key(@klass)
+      end
+      key = "#{class_name}:#{@attribute_name}"
+      extensions = Circulator.extensions[key]
+
+      # Apply each extension by creating a new Flow and merging its transition_map
+      extensions.each do |extension_block|
+        extension_flow = Flow.new(@klass, @attribute_name, @states, extension: true, flows_proc: @flows_proc, &extension_block)
+        extension_flow.transition_map.each do |action, transitions|
+          @transition_map[action] = if @transition_map[action]
+            @transition_map[action].merge(transitions)
+          else
+            transitions
+          end
+        end
+
+        # Merge states from extension
+        extension_flow.instance_variable_get(:@states).each do |state|
+          @states.add(state)
+        end
       end
     end
   end
