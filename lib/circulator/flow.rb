@@ -8,7 +8,7 @@ module Circulator
       @states = states
       @no_action = ->(attribute_name, action) { raise "No action found for the current state of #{attribute_name} (#{send(attribute_name)}): #{action}" }
       @flows_proc = flows_proc
-      @transition_map = flows_proc ? flows_proc.call : {}
+      @transition_map = flows_proc.call
 
       # Execute the main flow block
       instance_eval(&block) if block
@@ -34,7 +34,7 @@ module Circulator
         validate_allow_if(allow_if)
       end
 
-      @transition_map[name] ||= {}
+      @transition_map[name] ||= @flows_proc.call
       selected_state = (from == :__not_specified__) ? @current_state : from
 
       # Handle nil case specially - convert to [nil] instead of []
@@ -54,8 +54,10 @@ module Circulator
           @states.add(to_state)
         end
 
-        @transition_map[name][from_state] = {to:, block:}
-        @transition_map[name][from_state][:allow_if] = allow_if if allow_if
+        # Build transition data hash with all keys at once
+        transition_data = {to:, block:}
+        transition_data[:allow_if] = allow_if if allow_if
+        @transition_map[name][from_state] = transition_data
       end
     end
 
@@ -141,7 +143,6 @@ module Circulator
 
     def apply_extensions
       # Look up extensions for this class and attribute
-      # For Class objects, use the class name directly; for instances, use model_key
       class_name = if @klass.is_a?(Class)
         @klass.name || @klass.to_s
       else

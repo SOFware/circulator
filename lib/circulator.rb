@@ -154,7 +154,7 @@ module Circulator
   def flow(attribute_name, model: to_s, flows_proc: Circulator.default_flow_proc, &block)
     @flows ||= flows_proc.call
     model_key = Circulator.model_key(model)
-    @flows[model_key] ||= {}
+    @flows[model_key] ||= flows_proc.call
     # Pass the flows_proc to Flow so it can create transition_maps of the same type
     @flows[model_key][attribute_name] = Flow.new(self, attribute_name, flows_proc:, &block)
 
