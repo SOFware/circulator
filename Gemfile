@@ -2,6 +2,9 @@ source "https://rubygems.org"
 
 gemspec
 
+# Blended hash storage for workflow extensions
+gem "contours"
+
 # Ruby style guide
 gem "standard"
 

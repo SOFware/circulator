@@ -7,6 +7,7 @@ GEM
   remote: https://rubygems.org/
   specs:
     ast (2.4.3)
+    contours (0.2.0)
     docile (1.4.1)
     json (2.16.0)
     language_server-protocol (3.17.0.5)
@@ -70,6 +71,7 @@ PLATFORMS
 
 DEPENDENCIES
   circulator!
+  contours
   minitest
   reissue
   simplecov
