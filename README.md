@@ -285,6 +285,46 @@ class Payment
 end
 ```
 
+#### Extending Flows
+
+You can extend existing flows using `Circulator.extension`:
+
+```ruby
+class Document
+  extend Circulator
+
+  attr_accessor :status
+
+  flow :status do
+    state :draft do
+      action :submit, to: :review
+    end
+
+    state :review do
+      action :approve, to: :approved
+    end
+
+    state :approved
+  end
+end
+
+# Add additional states and transitions
+Circulator.extension(:Document, :status) do
+  state :review do
+    action :reject, to: :rejected
+  end
+
+  state :rejected do
+    action :revise, to: :draft
+  end
+end
+
+doc = Document.new
+doc.status = :review
+doc.status_reject  # => :rejected (from extension)
+doc.status_revise  # => :draft (from extension)
+```
+
 ### Generating Diagrams
 
 You can generate diagrams for your Circulator models using the `circulator-diagram` executable. By default, it will generate a DOT file. You can also generate a PlantUML file by passing the `-f plantuml` option.
