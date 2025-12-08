@@ -8,16 +8,20 @@ require_relative "../lib/circulator/dot"
 require_relative "../lib/circulator/plantuml"
 
 # Parse command-line options
-options = {format: "dot", require: nil, directory: "docs", separate: false}
+options = {format: "dot", require: nil, directory: "docs", separate: false, all: false}
 parser = OptionParser.new do |opts|
-  opts.banner = "Usage: circulator-diagram MODEL_NAME [options]"
+  opts.banner = "Usage: circulator-diagram [MODEL_NAME | --all] [options]"
   opts.separator ""
   opts.separator "Generate diagram files for Circulator state machine flows"
   opts.separator ""
   opts.separator "Arguments:"
-  opts.separator "  MODEL_NAME    Name of the model class with Circulator flows"
+  opts.separator "  MODEL_NAME    Name of the model class with Circulator flows (required unless --all is used)"
   opts.separator ""
   opts.separator "Options:"
+
+  opts.on("-a", "--all", "Generate diagrams for all classes with Circulator in their ancestry") do
+    options[:all] = true
+  end
 
   opts.on("-f", "--format FORMAT", ["dot", "plantuml"], "Output format (dot, plantuml). Default: dot") do |format|
     options[:format] = format
@@ -54,15 +58,15 @@ rescue OptionParser::InvalidOption => e
   exit 1
 end
 
-# Check for required model name argument
-if ARGV.empty?
-  warn "Error: MODEL_NAME is required"
+# Check for required model name argument or --all flag
+if ARGV.empty? && !options[:all]
+  warn "Error: Either MODEL_NAME or --all is required"
   warn ""
   warn parser
   exit 1
 end
 
-model_name = ARGV[0]
+model_name = ARGV[0] unless options[:all]
 
 # Load the application environment
 # Priority: -r option > config/environment.rb > nothing
@@ -79,22 +83,63 @@ elsif File.exist?("config/environment.rb")
   require File.expand_path("config/environment.rb")
 end
 
-# Try to constantize the model name
-begin
-  model_class = Object.const_get(model_name)
-rescue NameError
-  warn "Error: Model '#{model_name}' not found"
-  warn "Make sure the model is loaded in your environment"
-  exit 1
+# Find all classes with Circulator in their ancestry
+def find_circulator_classes
+  classes = []
+
+  # Try to force-load classes that might not be loaded yet
+  # This is especially important for Rails apps with lazy loading
+  if defined?(Rails) && Rails.application
+    begin
+      Rails.application.eager_load!
+    rescue => e
+      warn "Warning: Could not eager load Rails application: #{e.message}"
+    end
+  end
+
+  ObjectSpace.each_object(Class) do |klass|
+    # Skip anonymous classes and classes without names
+    next if klass.name.nil? || klass.name.empty?
+
+    # Check if the class responds to :flows (set up when Circulator is extended)
+    next unless klass.respond_to?(:flows)
+
+    begin
+      flows = klass.flows
+      next if flows.nil? || flows.empty?
+    rescue => e
+      # Skip classes where flows method raises an error
+      warn "Warning: Could not get flows for #{klass.name}: #{e.class} - #{e.message}"
+      next
+    end
+
+    classes << klass
+  rescue => e
+    # Skip any class that causes an error during inspection
+    if ENV["DEBUG"]
+      warn "Warning: Error inspecting class #{begin
+        klass.name
+      rescue
+        "unknown"
+      end}: #{e.class} - #{e.message}"
+    end
+    next
+  end
+
+  classes.sort_by(&:name)
 end
 
-# Generate diagram file(s)
-begin
-  generator = case options[:format]
-  when "plantuml"
-    Circulator::PlantUml.new(model_class)
-  else
-    Circulator::Dot.new(model_class)
+# Generate diagram for a single model class
+def generate_diagram_for_class(model_class, options)
+  begin
+    generator = case options[:format]
+    when "plantuml"
+      Circulator::PlantUml.new(model_class)
+    else
+      Circulator::Dot.new(model_class)
+    end
+  rescue => e
+    raise "Failed to initialize diagram generator for #{model_class.name}: #{e.class} - #{e.message}"
   end
 
   # Determine base output filename and extension
@@ -162,6 +207,59 @@ begin
       puts "To create an image, run:"
       puts "  dot -Tpng #{output_file} -o #{File.join(options[:directory], base_name)}.png"
     end
+  end
+end
+
+# Collect classes to generate diagrams for
+begin
+  if options[:all]
+    # Find all classes with Circulator in their ancestry
+    begin
+      classes_to_process = find_circulator_classes
+    rescue => e
+      warn "Error finding Circulator classes: #{e.class} - #{e.message}"
+      warn e.backtrace.first(10).join("\n")
+      exit 1
+    end
+
+    if classes_to_process.empty?
+      warn "No classes with Circulator flows found"
+      exit 1
+    end
+
+    puts "Found #{classes_to_process.size} class(es) with Circulator flows:"
+    classes_to_process.each do |klass|
+      puts "  - #{klass.name}"
+    end
+    puts ""
+  else
+    # Try to constantize the model name
+    begin
+      model_class = Object.const_get(model_name)
+    rescue NameError
+      warn "Error: Model '#{model_name}' not found"
+      warn "Make sure the model is loaded in your environment"
+      exit 1
+    end
+
+    classes_to_process = [model_class]
+  end
+
+  # Generate diagrams for all classes in the array
+  classes_to_process.each do |model_class|
+    if classes_to_process.size > 1
+      puts "Generating diagram for #{model_class.name}..."
+    end
+
+    begin
+      generate_diagram_for_class(model_class, options)
+    rescue => e
+      warn "Error generating diagram for #{model_class.name}: #{e.class} - #{e.message}"
+      warn e.backtrace.first(5).join("\n") if ENV["DEBUG"]
+      next
+    end
+
+    puts "" if classes_to_process.size > 1
   end
 
   exit 0
