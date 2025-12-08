@@ -329,6 +329,8 @@ doc.status_revise  # => :draft (from extension)
 
 You can generate diagrams for your Circulator models using the `circulator-diagram` executable. By default, it will generate a DOT file. You can also generate a PlantUML file by passing the `-f plantuml` option.
 
+#### Generate a diagram for a specific model:
+
 ```bash
 bundle exec circulator-diagram MODEL_NAME
 ```
@@ -336,6 +338,30 @@ bundle exec circulator-diagram MODEL_NAME
 ```bash
 bundle exec circulator-diagram MODEL_NAME -f plantuml
 ```
+
+#### Generate diagrams for all models with Circulator flows:
+
+Use the `--all` option to automatically find and generate diagrams for all classes that have Circulator flows defined:
+
+```bash
+bundle exec circulator-diagram --all
+```
+
+```bash
+bundle exec circulator-diagram --all -f plantuml
+```
+
+The `--all` option will:
+- Automatically discover all classes with Circulator flows (including classes that inherit from a parent that extends Circulator)
+- Eager load Rails application classes if running in a Rails environment
+- Generate diagrams for each class found
+- Use the same output directory and format options as single-model generation
+
+#### Other options:
+
+- `-d, --directory DIRECTORY` - Specify output directory (default: `docs`)
+- `-s, --separate` - Generate separate diagram files for each flow attribute
+- `-r, --require FILE` - Require a file before loading models (e.g., `config/environment`)
 
 ## Why Circulator?
 
