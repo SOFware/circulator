@@ -1850,7 +1850,7 @@ class CirculatorFlowTest < Minitest::Test
         end
       end
 
-      assert_match(/allow_if must be a Proc, Hash, or Symbol/, error.message)
+      assert_match(/allow_if must be a Proc, Hash, Symbol, or Array/, error.message)
     end
 
     it "raises error when hash-based allow_if references undefined attribute" do
@@ -2540,6 +2540,209 @@ class CirculatorFlowTest < Minitest::Test
 
         refute object.available_flow?(:status, :approve, 3)
         assert object.available_flow?(:status, :approve, 10)
+      end
+
+      it "validates array allow_if with symbols" do
+        array_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status, :approved, :in_budget
+
+          def initialize
+            @approved = false
+            @in_budget = false
+          end
+
+          def approved?
+            @approved
+          end
+
+          def in_budget?
+            @in_budget
+          end
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: [:approved?, :in_budget?]
+            end
+          end
+        end
+
+        object = array_class.new
+        object.status = :pending
+
+        # Both conditions false
+        refute object.available_flow?(:status, :approve)
+
+        # One condition true
+        object.approved = true
+        refute object.available_flow?(:status, :approve)
+
+        # Both conditions true
+        object.in_budget = true
+        assert object.available_flow?(:status, :approve)
+
+        # Can actually transition
+        object.status_approve
+        assert object.status_approved?
+      end
+
+      it "validates empty array raises error" do
+        error = assert_raises(ArgumentError) do
+          Class.new do
+            extend Circulator
+
+            attr_accessor :status
+
+            circulator :status do
+              state :pending do
+                action :approve, to: :approved, allow_if: []
+              end
+            end
+          end
+        end
+
+        assert_match(/allow_if array must not be empty/, error.message)
+      end
+
+      it "validates array elements must be symbols or procs" do
+        error = assert_raises(ArgumentError) do
+          Class.new do
+            extend Circulator
+
+            attr_accessor :status
+
+            circulator :status do
+              state :pending do
+                action :approve, to: :approved, allow_if: [:valid?, "invalid_string"]
+              end
+            end
+          end
+        end
+
+        assert_match(/allow_if array elements must be Symbols or Procs/, error.message)
+      end
+
+      it "validates undefined method in array raises error" do
+        error = assert_raises(ArgumentError) do
+          Class.new do
+            extend Circulator
+
+            attr_accessor :status
+
+            circulator :status do
+              state :pending do
+                action :approve, to: :approved, allow_if: [:undefined_method?]
+              end
+            end
+          end
+        end
+
+        assert_match(/allow_if references undefined method/, error.message)
+        assert_match(/:undefined_method\?/, error.message)
+      end
+
+      it "guards_for returns symbol guards from array allow_if" do
+        array_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          def approved?
+            true
+          end
+
+          def in_budget?
+            true
+          end
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: [:approved?, :in_budget?]
+            end
+          end
+        end
+
+        object = array_class.new
+        object.status = :pending
+
+        guards = object.guards_for(:status, :approve)
+        assert_equal [:approved?, :in_budget?], guards
+      end
+
+      it "guards_for returns nil for non-array allow_if" do
+        symbol_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          def can_approve?
+            true
+          end
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: :can_approve?
+            end
+          end
+        end
+
+        object = symbol_class.new
+        object.status = :pending
+
+        # Symbol guards return nil
+        assert_nil object.guards_for(:status, :approve)
+      end
+
+      it "supports mixing symbols and procs in array allow_if" do
+        mixed_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status, :admin
+
+          def base_check?
+            true
+          end
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: [:base_check?, -> { @admin }]
+            end
+          end
+        end
+
+        object = mixed_class.new
+        object.status = :pending
+        object.admin = false
+
+        refute object.available_flow?(:status, :approve)
+
+        object.admin = true
+        assert object.available_flow?(:status, :approve)
+      end
+
+      it "guards_for with mixed symbols and procs returns only symbols" do
+        mixed_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status
+
+          def check?
+            true
+          end
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: [:check?, -> { true }]
+            end
+          end
+        end
+
+        object = mixed_class.new
+        object.status = :pending
+
+        guards = object.guards_for(:status, :approve)
+        assert_equal [:check?], guards
       end
     end
   end
