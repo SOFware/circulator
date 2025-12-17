@@ -223,8 +223,18 @@ module Circulator
       end
 
       if transition[:allow_if]
+        # Handle array-based allow_if (array of symbols and/or procs)
+        if transition[:allow_if].is_a?(Array)
+          return unless transition[:allow_if].all? do |guard|
+            case guard
+            when Symbol
+              flow_target.send(guard, *args, **kwargs)
+            when Proc
+              flow_target.instance_exec(*args, **kwargs, &guard)
+            end
+          end
         # Handle hash-based allow_if (checking other attribute states)
-        if transition[:allow_if].is_a?(Hash)
+        elsif transition[:allow_if].is_a?(Hash)
           attribute_name_to_check, valid_states = transition[:allow_if].first
           current_state = flow_target.send(attribute_name_to_check)
 
@@ -341,6 +351,45 @@ module Circulator
       available_flows(attribute, *args, **kwargs).include?(action)
     end
 
+    # Get the guard methods for a specific transition
+    #
+    # Returns an array of Symbol method names if the guard is an array of symbols,
+    # or nil if no guard or guard is not an array.
+    #
+    # Example:
+    #
+    #   class Order
+    #     extend Circulator
+    #     flow(:status) do
+    #       state :pending do
+    #         action :approve, to: :approved, allow_if: [:approved?, :in_budget?]
+    #       end
+    #     end
+    #   end
+    #
+    #   order = Order.new
+    #   order.guards_for(:status, :approve)
+    #   # => [:approved?, :in_budget?]
+    def guards_for(attribute, action)
+      model_key = Circulator.model_key(self)
+      flow = flows.dig(model_key, attribute)
+      return nil unless flow
+
+      current_value = send(attribute)
+      current_state = current_value.respond_to?(:to_sym) ? current_value.to_sym : current_value
+
+      transition = flow.transition_map.dig(action, current_state)
+      return nil unless transition
+
+      guard = transition[:allow_if]
+      return nil unless guard
+
+      # If guard is an array, return only the Symbol elements
+      if guard.is_a?(Array)
+        guard.select { |g| g.is_a?(Symbol) }
+      end
+    end
+
     private
 
     def flows
@@ -349,6 +398,16 @@ module Circulator
 
     def check_allow_if(allow_if, *args, **kwargs)
       case allow_if
+      when Array
+        # All guards in array must be true (AND logic)
+        allow_if.all? do |guard|
+          case guard
+          when Symbol
+            send(guard, *args, **kwargs)
+          when Proc
+            instance_exec(*args, **kwargs, &guard)
+          end
+        end
       when Hash
         attribute_name, valid_states = allow_if.first
         current_state = send(attribute_name)

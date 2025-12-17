@@ -98,8 +98,10 @@ module Circulator
         validate_symbol_allow_if(allow_if)
       in Hash
         validate_hash_allow_if(allow_if)
+      in Array
+        validate_array_allow_if(allow_if)
       else
-        raise ArgumentError, "allow_if must be a Proc, Hash, or Symbol, got: #{allow_if.class}"
+        raise ArgumentError, "allow_if must be a Proc, Hash, Symbol, or Array, got: #{allow_if.class}"
       end
     end
 
@@ -138,6 +140,25 @@ module Circulator
       invalid_states = valid_states_array - referenced_states.to_a
       if invalid_states.any?
         raise ArgumentError, "allow_if references invalid states #{invalid_states.inspect} for :#{attribute_name}. Valid states: #{referenced_states.to_a.inspect}"
+      end
+    end
+
+    def validate_array_allow_if(allow_if_array)
+      # Array must not be empty
+      if allow_if_array.empty?
+        raise ArgumentError, "allow_if array must not be empty"
+      end
+
+      # First, validate all element types
+      allow_if_array.each do |element|
+        unless element.is_a?(Symbol) || element.is_a?(Proc)
+          raise ArgumentError, "allow_if array elements must be Symbols or Procs, got: #{element.class}"
+        end
+      end
+
+      # Then, validate that Symbol methods exist
+      allow_if_array.each do |element|
+        validate_symbol_allow_if(element) if element.is_a?(Symbol)
       end
     end
 

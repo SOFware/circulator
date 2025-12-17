@@ -173,6 +173,14 @@ end
 
 This is equivalent to the proc-based approach but cleaner when you have a dedicated method for the condition.
 
+You can also use an array of symbols to represent multiple conditions:
+
+```ruby
+action :publish, to: :published, allow_if: [:ready_to_publish?, :reviewed_by_present?]
+```
+
+This is equivalent to the proc-based approach but cleaner when you have multiple conditions.
+
 **Hash-based guards** check the state of another attribute:
 
 You can make one state machine depend on another using hash-based `allow_if`:
