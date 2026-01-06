@@ -295,7 +295,9 @@ end
 
 #### Extending Flows
 
-You can extend existing flows using `Circulator.extension`:
+You can extend existing flows using `Circulator.extension`. This is useful for plugins, multi-tenant applications, or conditional feature enhancement. Extensions are registered globally and automatically applied when a class defines its flow.
+
+**Basic Extension Example:**
 
 ```ruby
 class Document
@@ -316,7 +318,7 @@ class Document
   end
 end
 
-# Add additional states and transitions
+# Register extension - can be in a separate file or initializer
 Circulator.extension(:Document, :status) do
   state :review do
     action :reject, to: :rejected
@@ -327,10 +329,87 @@ Circulator.extension(:Document, :status) do
   end
 end
 
+# Extensions are automatically applied when class is loaded
 doc = Document.new
 doc.status = :review
 doc.status_reject  # => :rejected (from extension)
 doc.status_revise  # => :draft (from extension)
+```
+
+**How Extensions Work:**
+
+Extensions are registered globally using `Circulator.extension(class_name, attribute)` and are automatically applied when the class defines its flow. Multiple extensions can be registered for the same class/attribute and are applied in registration order. Extensions must be registered before the class definition (typically in initializers).
+
+By default, when an extension defines the same action from the same state as the base flow, the extension completely replaces the base definition (last-defined wins). To implement intelligent composition where extensions add their conditions/blocks additively, your application can configure a custom `flows_proc` that uses a Hash-like object with merge logic. Circulator remains dependency-free and supports any compatible Hash implementation.
+
+**Plugin-Style Extensions:**
+
+Extensions are perfect for gems that want to extend Circulator workflows without modifying the host application:
+
+```ruby
+# gem_name/lib/gem_name.rb
+Circulator.extension(:BlogPost, :status) do
+  state :draft do
+    action :generate_seo, to: :draft do
+      generate_meta_tags
+    end
+  end
+
+  state :published do
+    action :schedule_social, to: :published do
+      queue_social_sharing
+    end
+  end
+end
+
+# Host application doesn't need to know about the plugin's extensions
+class BlogPost
+  extend Circulator
+
+  flow :status do
+    state :draft do
+      action :publish, to: :published
+    end
+    state :published
+  end
+end
+
+# Plugin actions are automatically available
+post = BlogPost.new
+post.status = :draft
+post.status_generate_seo  # From plugin extension
+post.status_publish       # From base flow
+```
+
+**Conditional Extensions Based on Feature Flags:**
+
+```ruby
+# config/initializers/circulator_extensions.rb
+if ENV['ENABLE_APPROVAL_WORKFLOW']
+  Circulator.extension(:Document, :status) do
+    state :draft do
+      action :submit_for_approval, to: :approval
+    end
+
+    state :approval do
+      action :approve, to: :approved
+      action :reject, to: :draft
+    end
+
+    state :approved
+  end
+end
+
+# Base flow always available, additional workflow only when enabled
+class Document
+  extend Circulator
+
+  flow :status do
+    state :draft do
+      action :save, to: :draft
+    end
+  end
+end
 ```
 
 ### Generating Diagrams
