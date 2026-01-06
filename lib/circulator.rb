@@ -7,10 +7,34 @@ module Circulator
 
   @default_flow_proc = ::Hash.method(:new)
   class << self
+    # Returns the global registry of registered extensions
+    #
+    # The registry is a Hash where keys are "ClassName:attribute_name" strings
+    # and values are Arrays of extension blocks.
+    #
+    # Example:
+    #
+    #   Circulator.extensions["Document:status"]
+    #   # => [<Proc>, <Proc>]  # Array of extension blocks
     attr_reader :extensions
+
+    # The default Proc used to create transition_maps for flows
+    #
+    # By default, this returns Hash.method(:new), which creates regular Hashes.
+    # Can be overridden to use custom storage implementations (e.g., any Hash-like object
+    # with custom merge behavior) by setting @default_flow_proc before defining flows.
     attr_reader :default_flow_proc
 
     # Register an extension for a specific class and attribute
+    #
+    # Extensions allow you to add additional states and transitions to existing flows
+    # without modifying the original class definition. This is useful for:
+    # - Plugin gems extending host application workflows
+    # - Multi-tenant applications with customer-specific flows
+    # - Conditional feature enhancement based on configuration
+    #
+    # Extensions are registered globally and automatically applied when the class
+    # defines its flow. Multiple extensions can be registered for the same class/attribute.
     #
     # Example:
     #
@@ -18,9 +42,29 @@ module Circulator
     #     state :pending do
     #       action :send_to_legal, to: :legal_review
     #     end
+    #
+    #     state :legal_review do
+    #       action :approve, to: :approved
+    #     end
     #   end
     #
-    # Extensions are automatically applied when the class defines its flow
+    # Merging behavior (default):
+    # When an extension defines the same action from the same state as the base flow,
+    # the extension completely replaces the base definition (last-defined wins).
+    #
+    # Custom merging:
+    # To implement intelligent composition where extensions add conditions/blocks additively,
+    # pass a custom flows_proc parameter to your flow() definition that creates a Hash-like
+    # object with custom merge logic.
+    #
+    # Extension registration must happen before class definition (typically in initializers).
+    #
+    # Arguments:
+    # - class_name: Symbol or String - Name of class being extended
+    # - attribute_name: Symbol or String - Name of the flow attribute
+    # - block: Required block containing state and action definitions
+    #
+    # Raises ArgumentError if no block provided.
     def extension(class_name, attribute_name, &block)
       raise ArgumentError, "Block required for extension" unless block_given?
 
