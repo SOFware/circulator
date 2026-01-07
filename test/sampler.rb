@@ -213,3 +213,26 @@ class EmptyFlowsSampler
   # Clear the flows that Circulator creates
   @flows&.clear
 end
+
+# Class for testing Symbol and Array allow_if conditionals
+class ConditionalSampler
+  extend Circulator
+
+  attr_accessor :status
+
+  def can_approve?
+    true
+  end
+
+  def is_admin?
+    true
+  end
+
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved, allow_if: :can_approve?
+      action :force_approve, to: :approved, allow_if: [:can_approve?, :is_admin?]
+      action :custom_approve, to: :approved, allow_if: [:can_approve?, -> { true }]
+    end
+  end
+end

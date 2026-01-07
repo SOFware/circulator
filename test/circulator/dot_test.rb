@@ -127,13 +127,47 @@ class CirculatorDotTest < Minitest::Test
         assert_match(/workflow_state_nil -> workflow_state_in_progress/, result)
       end
 
-      it "handles conditional transitions with allow_if" do
+      it "handles conditional transitions with allow_if Proc" do
         dot = Circulator::Dot.new(Sampler)
         result = dot.generate
 
-        # Sampler has rejected -> pending transition with allow_if
+        # Sampler has rejected -> pending transition with allow_if Proc
         assert_match(/status_rejected -> status_pending/, result)
         assert_match(/label="reconsider \(conditional\)"/, result)
+      end
+
+      it "handles conditional transitions with allow_if Hash" do
+        dot = Circulator::Dot.new(NestedDependencySampler)
+        result = dot.generate
+
+        # NestedDependencySampler has publish with allow_if: {review_status: [:approved, :final]}
+        assert_match(/document_status_submitted -> document_status_published/, result)
+        assert_match(/label="publish \(review_status: approved, final\)"/, result)
+      end
+
+      it "handles conditional transitions with allow_if Symbol" do
+        dot = Circulator::Dot.new(ConditionalSampler)
+        result = dot.generate
+
+        # ConditionalSampler has approve with allow_if: :can_approve?
+        assert_match(/pending -> approved/, result)
+        assert_match(/label="approve \(can_approve\?\)"/, result)
+      end
+
+      it "handles conditional transitions with allow_if Array of Symbols" do
+        dot = Circulator::Dot.new(ConditionalSampler)
+        result = dot.generate
+
+        # ConditionalSampler has force_approve with allow_if: [:can_approve?, :is_admin?]
+        assert_match(/label="force_approve \(can_approve\?, is_admin\?\)"/, result)
+      end
+
+      it "handles conditional transitions with allow_if Array with Proc" do
+        dot = Circulator::Dot.new(ConditionalSampler)
+        result = dot.generate
+
+        # ConditionalSampler has custom_approve with allow_if: [:can_approve?, -> { true }]
+        assert_match(/label="custom_approve \(can_approve\?, conditional\)"/, result)
       end
 
       it "handles dynamic state determination with callable to:" do
