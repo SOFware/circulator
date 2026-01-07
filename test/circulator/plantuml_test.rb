@@ -120,13 +120,47 @@ class CirculatorPlantUmlTest < Minitest::Test
         assert_match(/workflow_state_in_progress --> workflow_state_completed/, result)
       end
 
-      it "handles conditional transitions with allow_if" do
+      it "handles conditional transitions with allow_if Proc" do
         plantuml = Circulator::PlantUml.new(Sampler)
         result = plantuml.generate
 
         assert_match(/status_rejected --> status_pending : reconsider/, result)
         assert_match(/note on link/, result)
-        assert_match(/conditional/, result)
+        assert_match(/conditional: \(conditional\)/, result)
+      end
+
+      it "handles conditional transitions with allow_if Hash" do
+        plantuml = Circulator::PlantUml.new(NestedDependencySampler)
+        result = plantuml.generate
+
+        # NestedDependencySampler has publish with allow_if: {review_status: [:approved, :final]}
+        assert_match(/document_status_submitted --> document_status_published : publish/, result)
+        assert_match(/conditional: \(review_status: approved, final\)/, result)
+      end
+
+      it "handles conditional transitions with allow_if Symbol" do
+        plantuml = Circulator::PlantUml.new(ConditionalSampler)
+        result = plantuml.generate
+
+        # ConditionalSampler has approve with allow_if: :can_approve?
+        assert_match(/pending --> approved : approve/, result)
+        assert_match(/conditional: \(can_approve\?\)/, result)
+      end
+
+      it "handles conditional transitions with allow_if Array of Symbols" do
+        plantuml = Circulator::PlantUml.new(ConditionalSampler)
+        result = plantuml.generate
+
+        # ConditionalSampler has force_approve with allow_if: [:can_approve?, :is_admin?]
+        assert_match(/conditional: \(can_approve\?, is_admin\?\)/, result)
+      end
+
+      it "handles conditional transitions with allow_if Array with Proc" do
+        plantuml = Circulator::PlantUml.new(ConditionalSampler)
+        result = plantuml.generate
+
+        # ConditionalSampler has custom_approve with allow_if: [:can_approve?, -> { true }]
+        assert_match(/conditional: \(can_approve\?, conditional\)/, result)
       end
 
       it "handles dynamic state determination with callable to:" do

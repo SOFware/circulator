@@ -87,7 +87,7 @@ module Circulator
 
     def standard_transition(action, from_state, to_state, conditional: nil)
       note = if conditional
-        "conditional transition"
+        "conditional: #{format_conditional(conditional)}"
       end
 
       {

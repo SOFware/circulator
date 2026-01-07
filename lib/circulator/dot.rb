@@ -124,7 +124,7 @@ module Circulator
 
     def standard_transition(action, from_state, to_state, conditional: nil)
       label = action.to_s
-      label += " (conditional)" if conditional
+      label += " #{format_conditional(conditional)}" if conditional
 
       {
         from: from_state,

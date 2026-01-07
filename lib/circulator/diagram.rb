@@ -144,5 +144,30 @@ module Circulator
     def dynamic_transition(action, from_state, to_state = nil)
       raise NotImplementedError, "Subclasses must implement #{__method__}"
     end
+
+    def format_conditional(conditional)
+      case conditional
+      when Symbol
+        "(#{conditional})"
+      when Hash
+        attr, states = conditional.first
+        states_str = Array(states).join(", ")
+        "(#{attr}: #{states_str})"
+      when Array
+        parts = conditional.map { |c| format_conditional_part(c) }
+        "(#{parts.join(", ")})"
+      else
+        "(conditional)"
+      end
+    end
+
+    def format_conditional_part(part)
+      case part
+      when Symbol
+        part.to_s
+      else
+        "conditional"
+      end
+    end
   end
 end

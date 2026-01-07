@@ -2744,6 +2744,56 @@ class CirculatorFlowTest < Minitest::Test
         guards = object.guards_for(:status, :approve)
         assert_equal [:check?], guards
       end
+
+      it "executes transition when array allow_if with proc passes" do
+        mixed_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status, :admin
+
+          def check?
+            true
+          end
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: [:check?, -> { @admin }]
+            end
+          end
+        end
+
+        object = mixed_class.new
+        object.status = :pending
+        object.admin = true
+
+        object.status_approve
+        assert_equal :approved, object.status
+      end
+
+      it "blocks transition when array allow_if with proc fails" do
+        mixed_class = Class.new do
+          extend Circulator
+
+          attr_accessor :status, :admin
+
+          def check?
+            true
+          end
+
+          circulator :status do
+            state :pending do
+              action :approve, to: :approved, allow_if: [:check?, -> { @admin }]
+            end
+          end
+        end
+
+        object = mixed_class.new
+        object.status = :pending
+        object.admin = false
+
+        object.status_approve
+        assert_equal :pending, object.status
+      end
     end
   end
 end
