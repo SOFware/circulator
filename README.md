@@ -338,7 +338,7 @@ doc.status_revise  # => :draft (from extension)
 
 **How Extensions Work:**
 
-Extensions are registered globally using `Circulator.extension(class_name, attribute)` and are automatically applied when the class defines its flow. Multiple extensions can be registered for the same class/attribute and are applied in registration order. Extensions must be registered before the class definition (typically in initializers).
+Extensions are registered globally using `Circulator.extension(class_name, attribute)` and are automatically applied when the class defines its flow. Multiple extensions can be registered for the same class/attribute and are applied in registration order. Extensions can be registered before or after the class definition—if registered after, they are applied immediately to the existing flow.
 
 By default, when an extension defines the same action from the same state as the base flow, the extension completely replaces the base definition (last-defined wins). To implement intelligent composition where extensions add their conditions/blocks additively, your application can configure a custom `flows_proc` that uses a Hash-like object with merge logic. Circulator remains dependency-free and supports any compatible Hash implementation.
 

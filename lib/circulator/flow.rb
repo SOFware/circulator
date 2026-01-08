@@ -88,6 +88,34 @@ module Circulator
       end
     end
 
+    # Merge an extension block into this flow
+    #
+    # Creates an extension flow from the block and merges its transitions
+    # and states into this flow. Returns self for convenience.
+    #
+    # Example:
+    #
+    #   existing_flow.merge do
+    #     state :pending do
+    #       action :send_to_legal, to: :legal_review
+    #     end
+    #   end
+    #
+    def merge(&block)
+      extension_flow = Flow.new(@klass, @attribute_name, @states, extension: true, flows_proc: @flows_proc, &block)
+
+      # Merge transition map
+      extension_flow.transition_map.each do |action, transitions|
+        @transition_map[action] = if @transition_map[action]
+          @transition_map[action].merge(transitions)
+        else
+          transitions
+        end
+      end
+
+      self
+    end
+
     private
 
     def validate_allow_if(allow_if)
@@ -172,21 +200,9 @@ module Circulator
       key = "#{class_name}:#{@attribute_name}"
       extensions = Circulator.extensions[key]
 
-      # Apply each extension by creating a new Flow and merging its transition_map
+      # Apply each extension using merge
       extensions.each do |extension_block|
-        extension_flow = Flow.new(@klass, @attribute_name, @states, extension: true, flows_proc: @flows_proc, &extension_block)
-        extension_flow.transition_map.each do |action, transitions|
-          @transition_map[action] = if @transition_map[action]
-            @transition_map[action].merge(transitions)
-          else
-            transitions
-          end
-        end
-
-        # Merge states from extension
-        extension_flow.instance_variable_get(:@states).each do |state|
-          @states.add(state)
-        end
+        merge(&extension_block)
       end
     end
   end

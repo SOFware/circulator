@@ -2796,4 +2796,218 @@ class CirculatorFlowTest < Minitest::Test
       end
     end
   end
+
+  describe "Flow#merge" do
+    it "merges new actions into existing flow" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status
+      end
+
+      flow = Circulator::Flow.new(klass, :status) do
+        state :pending do
+          action :approve, to: :approved
+        end
+      end
+
+      assert flow.transition_map[:approve]
+      refute flow.transition_map[:reject]
+
+      flow.merge do
+        state :pending do
+          action :reject, to: :rejected
+        end
+      end
+
+      assert flow.transition_map[:approve]
+      assert flow.transition_map[:reject]
+      assert_equal :rejected, flow.transition_map[:reject][:pending][:to]
+    end
+
+    it "merges new transitions into existing actions" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status
+      end
+
+      flow = Circulator::Flow.new(klass, :status) do
+        state :pending do
+          action :cancel, to: :cancelled
+        end
+      end
+
+      # Only has transition from :pending
+      assert flow.transition_map[:cancel][:pending]
+      refute flow.transition_map[:cancel][:processing]
+
+      flow.merge do
+        state :processing do
+          action :cancel, to: :cancelled
+        end
+      end
+
+      # Now has transitions from both states
+      assert flow.transition_map[:cancel][:pending]
+      assert flow.transition_map[:cancel][:processing]
+    end
+
+    it "returns self for chaining" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status
+      end
+
+      flow = Circulator::Flow.new(klass, :status) do
+        state :pending do
+          action :approve, to: :approved
+        end
+      end
+
+      result = flow.merge do
+        state :approved do
+          action :publish, to: :published
+        end
+      end
+
+      assert_same flow, result
+    end
+
+    it "merges states into the flow" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status
+      end
+
+      flow = Circulator::Flow.new(klass, :status) do
+        state :pending do
+          action :approve, to: :approved
+        end
+      end
+
+      states_before = flow.instance_variable_get(:@states).to_a
+
+      flow.merge do
+        state :approved do
+          action :archive, to: :archived
+        end
+      end
+
+      states_after = flow.instance_variable_get(:@states).to_a
+      assert_includes states_after, :archived
+      assert states_after.length > states_before.length
+    end
+
+    it "allows multiple merges" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status
+      end
+
+      flow = Circulator::Flow.new(klass, :status) do
+        state :draft do
+          action :submit, to: :pending
+        end
+      end
+
+      flow.merge do
+        state :pending do
+          action :approve, to: :approved
+        end
+      end
+
+      flow.merge do
+        state :approved do
+          action :publish, to: :published
+        end
+      end
+
+      assert flow.transition_map[:submit]
+      assert flow.transition_map[:approve]
+      assert flow.transition_map[:publish]
+    end
+
+    it "overwrites existing transitions when merging same action from same state" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status
+      end
+
+      flow = Circulator::Flow.new(klass, :status) do
+        state :pending do
+          action :approve, to: :approved
+        end
+      end
+
+      assert_equal :approved, flow.transition_map[:approve][:pending][:to]
+
+      flow.merge do
+        state :pending do
+          action :approve, to: :fast_tracked
+        end
+      end
+
+      # The merge should overwrite the existing transition
+      assert_equal :fast_tracked, flow.transition_map[:approve][:pending][:to]
+    end
+
+    it "works with action blocks" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status, :counter
+
+        def initialize
+          @counter = 0
+        end
+      end
+
+      flow = Circulator::Flow.new(klass, :status) do
+        state :pending do
+          action :approve, to: :approved
+        end
+      end
+
+      flow.merge do
+        state :approved do
+          action :count, to: :counted do
+            @counter += 1
+          end
+        end
+      end
+
+      assert flow.transition_map[:count][:approved][:block]
+    end
+
+    it "works with allow_if conditions" do
+      klass = Class.new do
+        extend Circulator
+
+        attr_accessor :status
+
+        def admin?
+          true
+        end
+      end
+
+      flow = Circulator::Flow.new(klass, :status) do
+        state :pending do
+          action :approve, to: :approved
+        end
+      end
+
+      flow.merge do
+        state :pending do
+          action :force_approve, to: :approved, allow_if: :admin?
+        end
+      end
+
+      assert flow.transition_map[:force_approve][:pending][:allow_if]
+    end
+  end
 end
