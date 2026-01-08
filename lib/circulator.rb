@@ -70,8 +70,66 @@ module Circulator
 
       key = "#{class_name}:#{attribute_name}"
       @extensions[key] << block
+
+      # If the class already exists and has flows defined, apply the extension immediately
+      apply_extension_to_existing_flow(class_name, attribute_name, block)
+    end
+
+    private
+
+    def apply_extension_to_existing_flow(class_name, attribute_name, block)
+      # Try to get the class constant
+      klass = begin
+        Object.const_get(class_name.to_s)
+      rescue NameError
+        return # Class doesn't exist yet, extension will be applied when flow is defined
+      end
+
+      # Check if the class has flows and the specific attribute flow
+      return unless klass.respond_to?(:flows) && klass.flows
+
+      model_key = Circulator.model_key(klass.to_s)
+      existing_flow = klass.flows.dig(model_key, attribute_name.to_sym)
+      return unless existing_flow
+
+      # Merge the extension into the existing flow
+      existing_flow.merge(&block)
+
+      # Re-define flow methods for any new actions/states
+      redefine_flow_methods(klass, attribute_name, existing_flow)
+    end
+
+    def redefine_flow_methods(klass, attribute_name, flow)
+      flow_module = klass.ancestors.find { |ancestor|
+        ancestor.name.to_s =~ /#{FLOW_MODULE_NAME}/o
+      }
+      return unless flow_module
+
+      object = nil # Extensions only work on the same class model
+
+      # Define or redefine methods for actions (need to redefine if transitions changed)
+      flow.transition_map.each do |action, transitions|
+        method_name = [object, attribute_name, action].compact.join("_")
+
+        # Remove existing method so it can be redefined with updated transitions
+        if flow_module.method_defined?(method_name)
+          flow_module.remove_method(method_name)
+        end
+
+        klass.send(:define_flow_method, attribute_name: attribute_name, action: action, transitions: transitions, object: object, owner: flow_module)
+      end
+
+      # Define predicate methods for any new states
+      states = flow.instance_variable_get(:@states)
+      states.each do |state|
+        next if state.nil?
+        klass.send(:define_state_method, attribute_name: attribute_name, state: state, object: object, owner: flow_module)
+      end
     end
   end
+
+  FLOW_MODULE_NAME = "FlowMethods"
+
   # Declare a flow for an attribute.
   #
   # Specify the attribute to be used for states and actions.
@@ -203,11 +261,11 @@ module Circulator
     @flows[model_key][attribute_name] = Flow.new(self, attribute_name, flows_proc:, &block)
 
     flow_module = ancestors.find { |ancestor|
-      ancestor.name.to_s =~ /FlowMethods/
+      ancestor.name.to_s =~ /#{FLOW_MODULE_NAME}/o
     } || Module.new.tap do |mod|
       include mod
 
-      const_set(:FlowMethods, mod)
+      const_set(FLOW_MODULE_NAME.to_sym, mod)
     end
 
     object = if model == to_s
