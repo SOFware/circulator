@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    circulator (2.1.9)
+    circulator (2.1.10)
 
 GEM
   remote: https://rubygems.org/
