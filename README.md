@@ -497,12 +497,7 @@ To install this gem onto your local machine, run bundle exec rake install.
 
 This project is managed with [Reissue](https://github.com/SOFware/reissue).
 
-To release a new version, make your changes and be sure to update the CHANGELOG.md.
-
-To release a new version:
-
-    bundle exec rake build:checksum
-    bundle exec rake release
+Releases are automated via the [shared release workflow](https://github.com/SOFware/reissue/blob/main/.github/workflows/SHARED_WORKFLOW_README.md). Trigger a release by running the "Release gem to RubyGems.org" workflow from the Actions tab.
 
 ## Contributing
 
