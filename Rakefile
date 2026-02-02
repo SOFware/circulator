@@ -22,4 +22,5 @@ Reissue::Task.create :reissue do |task|
   task.changelog_file = "CHANGELOG.md"
   task.version_limit = 1
   task.fragment = :git
+  task.push_finalize = :branch
 end
