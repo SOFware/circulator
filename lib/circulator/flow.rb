@@ -88,6 +88,14 @@ module Circulator
       end
     end
 
+    def around(&block)
+      if block_given?
+        @around = block
+      else
+        @around
+      end
+    end
+
     # Merge an extension block into this flow
     #
     # Creates an extension flow from the block and merges its transitions

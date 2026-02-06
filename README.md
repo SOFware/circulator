@@ -10,6 +10,7 @@ A lightweight and flexible state machine implementation for Ruby that allows you
 - **Conditional Transitions**: Support for guards and conditional logic
 - **Nested State Dependencies**: State machines can depend on the state of other attributes
 - **Transition Callbacks**: Execute code before, during, or after transitions
+- **Around Wrapping**: Wrap all transitions in a flow with shared logic (e.g., `with_lock`)
 - **Multiple State Machines**: Define multiple independent state machines per class
 - **Framework Agnostic**: Works with plain Ruby objects, no Rails or ActiveRecord required
 - **100% Test Coverage**: Thoroughly tested with comprehensive test suite
@@ -292,6 +293,68 @@ class Payment
   end
 end
 ```
+
+#### Wrapping Transitions with `around`
+
+Use the `around` block to wrap all transitions in a flow with shared logic. The block receives a `transition` proc that you must call for the transition to execute:
+
+```ruby
+class Order
+  extend Circulator
+
+  attr_accessor :status
+
+  flow :status do
+    around do |transition|
+      puts "before transition"
+      transition.call
+      puts "after transition"
+    end
+
+    state :pending do
+      action :approve, to: :approved
+    end
+  end
+end
+```
+
+The `around` block is `instance_exec`'d on the instance (consistent with transition blocks and `allow_if` procs), so `self` is the object being transitioned.
+
+**Transactional safety with ActiveRecord:**
+
+This is particularly useful for wrapping transitions in a database lock to prevent race conditions:
+
+```ruby
+class Order < ApplicationRecord
+  extend Circulator
+
+  flow :status do
+    around do |transition|
+      with_lock { transition.call }
+    end
+
+    state :pending do
+      action :approve, to: :approved do
+        self.approved_at = Time.current
+      end
+    end
+
+    state :approved do
+      action :ship, to: :shipped
+    end
+  end
+end
+
+# The guard check, transition block, state change, and caller block
+# all execute inside the lock — no wrapper methods needed
+order.status_approve
+```
+
+**Key behaviors:**
+
+- The state read, guard checks (`allow_if`), and state change all run **inside** the wrapper, so the entire check-then-act sequence is atomic
+- If `transition.call` is never called, the transition does not execute
+- Each flow can have its own `around` block (or none) — flows without one behave exactly as before
 
 #### Extending Flows
 

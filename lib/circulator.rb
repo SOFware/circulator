@@ -116,14 +116,14 @@ module Circulator
           flow_module.remove_method(method_name)
         end
 
-        klass.send(:define_flow_method, attribute_name: attribute_name, action: action, transitions: transitions, object: object, owner: flow_module)
+        klass.send(:define_flow_method, attribute_name:, action:, transitions:, object:, owner: flow_module)
       end
 
       # Define predicate methods for any new states
       states = flow.instance_variable_get(:@states)
       states.each do |state|
         next if state.nil?
-        klass.send(:define_state_method, attribute_name: attribute_name, state: state, object: object, owner: flow_module)
+        klass.send(:define_state_method, attribute_name:, state:, object:, owner: flow_module)
       end
     end
   end
@@ -253,6 +253,21 @@ module Circulator
   #  test_object.flow(:unknown, :status, "signal")
   #  # Will raise an UnhandledSignalError
   #
+  # You can also provide an around block to wrap the flow logic.
+  #
+  # Example:
+  #
+  #  flow(:status) do
+  #    around do |flow_logic|
+  #      with_logging do
+  #        flow_logic.call
+  #      end
+  #    end
+  #  end
+  #
+  #  test_object.status_approve
+  #  # Will log the flow logic according to the with_logging block behavior
+  #
   def flow(attribute_name, model: to_s, flows_proc: Circulator.default_flow_proc, &block)
     @flows ||= flows_proc.call
     model_key = Circulator.model_key(model)
@@ -311,65 +326,62 @@ module Circulator
     raise ArgumentError, "Method already defined: #{object_attribute_method}" if owner.method_defined?(object_attribute_method)
 
     owner.define_method(object_attribute_method) do |*args, flow_target: self, **kwargs, &block|
-      current_value = flow_target.send(attribute_name)
+      flow_logic = -> {
+        current_value = flow_target.send(attribute_name)
 
-      transition = if current_value.respond_to?(:to_sym)
-        transitions[current_value.to_sym]
-      else
-        transitions[current_value]
-      end
-
-      unless transition
-        flow_target.instance_exec(attribute_name, action, &flows.dig(Circulator.model_key(flow_target), attribute_name).no_action)
-        return
-      end
-
-      if transition[:allow_if]
-        # Handle array-based allow_if (array of symbols and/or procs)
-        if transition[:allow_if].is_a?(Array)
-          return unless transition[:allow_if].all? do |guard|
-            case guard
-            when Symbol
-              flow_target.send(guard, *args, **kwargs)
-            when Proc
-              flow_target.instance_exec(*args, **kwargs, &guard)
-            end
-          end
-        # Handle hash-based allow_if (checking other attribute states)
-        elsif transition[:allow_if].is_a?(Hash)
-          attribute_name_to_check, valid_states = transition[:allow_if].first
-          current_state = flow_target.send(attribute_name_to_check)
-
-          # Convert current state to symbol if possible
-          current_state = current_state.to_sym if current_state.respond_to?(:to_sym)
-
-          # Convert valid_states to array of symbols
-          valid_states_array = Array(valid_states).map { |s| s.respond_to?(:to_sym) ? s.to_sym : s }
-
-          # Return early if current state is not in the valid states
-          return unless valid_states_array.include?(current_state)
-        elsif transition[:allow_if].is_a?(Symbol)
-          # Handle symbol-based allow_if (method name)
-          return unless flow_target.send(transition[:allow_if])
+        transition = if current_value.respond_to?(:to_sym)
+          transitions[current_value.to_sym]
         else
-          # Handle proc-based allow_if (original behavior)
-          return unless flow_target.instance_exec(*args, **kwargs, &transition[:allow_if])
+          transitions[current_value]
         end
-      end
 
-      if transition[:block]
-        flow_target.instance_exec(*args, **kwargs, &transition[:block])
-      end
+        unless transition
+          flow_target.instance_exec(attribute_name, action, &flows.dig(Circulator.model_key(flow_target), attribute_name).no_action)
+          return
+        end
 
-      if transition[:to].respond_to?(:call)
-        flow_target.send("#{attribute_name}=", flow_target.instance_exec(*args, **kwargs, &transition[:to]))
+        return if transition[:allow_if] && !Circulator.evaluate_guard(flow_target, transition[:allow_if], *args, **kwargs)
+
+        flow_target.instance_exec(*args, **kwargs, &transition[:block]) if transition[:block]
+
+        if transition[:to].respond_to?(:call)
+          flow_target.send("#{attribute_name}=", flow_target.instance_exec(*args, **kwargs, &transition[:to]))
+        else
+          flow_target.send("#{attribute_name}=", transition[:to])
+        end.tap do
+          flow_target.instance_exec(*args, **kwargs, &block) if block
+        end
+      }
+
+      around_block = flows.dig(Circulator.model_key(flow_target), attribute_name)&.around
+
+      if around_block
+        flow_target.instance_exec(flow_logic, &around_block)
       else
-        flow_target.send("#{attribute_name}=", transition[:to])
-      end.tap do
-        if block
-          flow_target.instance_exec(*args, **kwargs, &block)
+        flow_logic.call
+      end
+    end
+  end
+
+  module_function def evaluate_guard(target, allow_if, *args, **kwargs)
+    case allow_if
+    when Array
+      allow_if.all? do |guard|
+        case guard
+        when Symbol then target.send(guard, *args, **kwargs)
+        when Proc then target.instance_exec(*args, **kwargs, &guard)
         end
       end
+    when Hash
+      attribute_name, valid_states = allow_if.first
+      current_state = target.send(attribute_name)
+      current_state = current_state.to_sym if current_state.respond_to?(:to_sym)
+      valid_states_array = Array(valid_states).map { |s| s.respond_to?(:to_sym) ? s.to_sym : s }
+      valid_states_array.include?(current_state)
+    when Symbol
+      target.send(allow_if, *args, **kwargs)
+    else
+      target.instance_exec(*args, **kwargs, &allow_if)
     end
   end
 
@@ -499,28 +511,7 @@ module Circulator
     end
 
     def check_allow_if(allow_if, *args, **kwargs)
-      case allow_if
-      when Array
-        # All guards in array must be true (AND logic)
-        allow_if.all? do |guard|
-          case guard
-          when Symbol
-            send(guard, *args, **kwargs)
-          when Proc
-            instance_exec(*args, **kwargs, &guard)
-          end
-        end
-      when Hash
-        attribute_name, valid_states = allow_if.first
-        current_state = send(attribute_name)
-        current_state = current_state.to_sym if current_state.respond_to?(:to_sym)
-        valid_states_array = Array(valid_states).map { |s| s.respond_to?(:to_sym) ? s.to_sym : s }
-        valid_states_array.include?(current_state)
-      when Symbol
-        send(allow_if, *args, **kwargs)
-      else # Proc
-        instance_exec(*args, **kwargs, &allow_if)
-      end
+      Circulator.evaluate_guard(self, allow_if, *args, **kwargs)
     end
   end
 end
