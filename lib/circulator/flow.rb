@@ -6,7 +6,7 @@ module Circulator
       @klass = klass
       @attribute_name = attribute_name
       @states = states
-      @no_action = ->(attribute_name, action) { raise "No action found for the current state of #{attribute_name} (#{send(attribute_name)}): #{action}" }
+      @action_missing = ->(attribute_name, action) { raise "No action found for the current state of #{attribute_name} (#{send(attribute_name)}): #{action}" }
       @flows_proc = flows_proc
       @transition_map = flows_proc.call
 
@@ -80,14 +80,53 @@ module Circulator
       end
     end
 
-    def no_action(&block)
+    # Called when an action is invoked but no transition is defined for the
+    # current state. For example, if an object is in :approved and you call
+    # an action that only has a transition from :pending, this block runs.
+    #
+    # By default, raises an error. Override to silently ignore, log, or
+    # handle the missing transition however you like.
+    #
+    # The block receives two arguments: the attribute name and the action name.
+    #
+    # Example:
+    #
+    #   flow(:status) do
+    #     action_missing do |attribute_name, action|
+    #       Rails.logger.warn("No transition for #{attribute_name} in #{action}")
+    #     end
+    #   end
+    def action_missing(&block)
       if block_given?
-        @no_action = block
+        @action_missing = block
       else
-        @no_action
+        @action_missing
       end
     end
+    alias_method :no_action, :action_missing
 
+    # Wraps every transition in this flow. The block receives a lambda that
+    # executes the transition logic (guard check, state change, and any
+    # transition block). You must call +transition.call+ for the transition
+    # to actually happen — omitting it prevents the state change entirely.
+    #
+    # Useful for wrapping transitions in database transactions, logging,
+    # instrumentation, or any before/after behavior.
+    #
+    # Example:
+    #
+    #   flow(:status) do
+    #     around do |transition|
+    #       ActiveRecord::Base.transaction do
+    #         transition.call
+    #       end
+    #     end
+    #
+    #     state :pending do
+    #       action :approve, to: :approved
+    #     end
+    #   end
+    #
     def around(&block)
       if block_given?
         @around = block
