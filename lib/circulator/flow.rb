@@ -18,6 +18,18 @@ module Circulator
     end
     attr_reader :transition_map
 
+    # Declares a state in the flow. The block is evaluated in the context
+    # of the flow, allowing you to define actions that transition from
+    # this state. A state with no block acts as a terminal state.
+    #
+    #   flow(:status) do
+    #     state :pending do
+    #       action :approve, to: :approved
+    #     end
+    #
+    #     state :approved # terminal state
+    #   end
+    #
     def state(name, &block)
       name = name.to_sym if name.respond_to?(:to_sym)
       @states.add(name)
@@ -26,6 +38,34 @@ module Circulator
       remove_instance_variable(:@current_state)
     end
 
+    # Declares a transition from one or more states to a destination state.
+    # Must be called inside a +state+ block, or with an explicit +from:+ option.
+    #
+    # Generates a method named +<attribute>_<action>+ on the class that
+    # performs the transition when called.
+    #
+    # ==== Options
+    #
+    # +to+::       The destination state (Symbol) or a callable that returns
+    #              the destination state at runtime.
+    # +from+::     One or more source states. Defaults to the enclosing
+    #              +state+ block. Pass an Array to define the same action
+    #              from multiple states.
+    # +allow_if+:: A guard condition that must be truthy for the transition
+    #              to proceed. Accepts a Proc, Symbol (method name), Hash
+    #              (checks another flow's state), or Array of those.
+    # +&block+::   A block executed on the instance during the transition,
+    #              before the state is changed.
+    #
+    #   state :pending do
+    #     action :approve, to: :approved, allow_if: :reviewer? do
+    #       self.approved_at = Time.now
+    #     end
+    #   end
+    #
+    #   # Or with an explicit from:
+    #   action :cancel, from: [:pending, :processing], to: :cancelled
+    #
     def action(name, to:, from: :__not_specified__, allow_if: nil, &block)
       raise "You must be in a state block or have a `from` option to declare an action" unless defined?(@current_state) || from != :__not_specified__
 
@@ -61,6 +101,22 @@ module Circulator
       end
     end
 
+    # Attaches an +allow_if+ guard to an existing action after it has been
+    # defined. This is useful when the guard logic needs to be defined
+    # separately from the action itself, such as in an extension.
+    #
+    # Must be called inside a +state+ block, or with an explicit +from:+ option.
+    # The action must already exist in the transition map.
+    #
+    # Example:
+    #
+    #   flow(:status) do
+    #     state :pending do
+    #       action :approve, to: :approved
+    #       action_allowed(:approve) { current_user.admin? }
+    #     end
+    #   end
+    #
     def action_allowed(name, from: :__not_specified__, &block)
       raise "You must be in a state block or have a `from` option to declare an action" unless defined?(@current_state) || from != :__not_specified__
 
