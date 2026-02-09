@@ -1,6 +1,251 @@
 require "test_helper"
 require_relative "../sampler"
 
+class InvalidActionFlowSampler < SamplerBase
+  extend Circulator
+
+  attr_accessor :status
+
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved
+    end
+  end
+end
+
+class ActionAllowedFromSampler < SamplerBase
+  extend Circulator
+
+  attr_accessor :status, :user_role
+
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved
+    end
+
+    # This should work because we have from: option
+    action_allowed(:approve, from: :pending) { @user_role == "admin" }
+  end
+end
+
+class NilAllowedSampler
+  extend Circulator
+
+  attr_accessor :status, :can_initialize
+
+  def initialize(status: nil)
+    @status = status
+    @can_initialize = false
+  end
+
+  circulator :status do
+    action :initialize, to: :pending, from: nil
+    action_allowed(:initialize, from: nil) { @can_initialize }
+  end
+end
+
+class NilStateAllowedSampler
+  extend Circulator
+
+  attr_accessor :status, :can_proceed
+
+  def initialize(status: nil)
+    @status = status
+    @can_proceed = false
+  end
+
+  circulator :status do
+    state nil do
+      action :start, to: :pending
+      action_allowed(:start) { @can_proceed }
+    end
+
+    state :pending do
+      action :reset, to: nil
+    end
+  end
+end
+
+class NoActionGetterSampler < SamplerBase
+  extend Circulator
+
+  attr_accessor :status
+
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved
+    end
+
+    no_action { |attr, action| "Custom no action" }
+  end
+end
+
+class DefaultGetterSampler < SamplerBase
+  extend Circulator
+
+  attr_accessor :status
+
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved
+    end
+    # Don't set a custom no_action
+  end
+end
+
+class AllowIfFalseSampler
+  extend Circulator
+
+  attr_accessor :status, :transition_count
+
+  def initialize(status: nil)
+    @status = status
+    @transition_count = 0
+  end
+
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved, allow_if: -> { false } do
+        @transition_count += 1
+      end
+    end
+  end
+end
+
+class TransitionBlockSampler
+  extend Circulator
+
+  attr_accessor :status, :block_executed
+
+  def initialize(status: nil)
+    @status = status
+    @block_executed = false
+  end
+
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved do
+        @block_executed = true
+      end
+    end
+  end
+end
+
+class CallableToSampleSampler
+  extend Circulator
+
+  attr_accessor :status, :next_state
+
+  def initialize(status: nil)
+    @status = status
+    @next_state = :approved
+  end
+
+  circulator :status do
+    state :pending do
+      action :process, to: -> { @next_state }
+    end
+  end
+end
+
+class NoTransitionSampler
+  extend Circulator
+
+  attr_accessor :status, :no_action_called
+
+  def initialize(status: nil)
+    @status = status
+    @no_action_called = false
+  end
+
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved
+    end
+
+    state :approved do
+      # No actions defined for approved state
+    end
+
+    no_action do |attribute_name, action|
+      @no_action_called = true
+      # Don't raise an error, just track that it was called
+    end
+  end
+end
+
+class AdditionalBlockSampler
+  extend Circulator
+
+  attr_accessor :status, :additional_block_executed
+
+  def initialize(status: nil)
+    @status = status
+    @additional_block_executed = false
+  end
+
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved
+    end
+  end
+end
+
+class SpecialTaskSampler
+  extend Circulator
+
+  attr_accessor :status, :completed
+
+  def self.name
+    "SpecialTask"
+  end
+
+  def initialize
+    @status = :pending
+    @completed = false
+  end
+
+  circulator :status do
+    state :pending do
+      action :complete, to: :done do
+        @completed = true
+      end
+    end
+  end
+
+  # Manually define the prefixed method that would be called from manager
+  # This simulates the method that would exist if manager had defined flows for task
+  define_method :special_task_status_complete do |*args, **kwargs, &block|
+    # Delegate to the regular method
+    status_complete(*args, **kwargs, &block)
+  end
+end
+
+class TaskManagerSampler
+  extend Circulator
+
+  def self.name
+    "TaskManager"
+  end
+
+  # Manager doesn't define any flows or methods for special_task_status
+end
+
+class IntegerStatusSampler < SamplerBase
+  extend Circulator
+
+  attr_accessor :status
+
+  circulator :status do
+    state 0 do
+      action :increment, to: 1
+    end
+    state 1 do
+      action :increment, to: 2
+    end
+  end
+end
+
 class CirculatorCoverageTest < Minitest::Test
   describe "Additional coverage tests" do
     describe "Method already defined error" do
@@ -82,8 +327,7 @@ class CirculatorCoverageTest < Minitest::Test
 
       it "calls method on self when respond_to? is true" do
         # This tests line 227 where self responds to the method
-        sampler = Sampler.new
-        sampler.status = :pending
+        sampler = Sampler.new(status: :pending)
 
         # Use flow method when object has the method
         sampler.flow(:approve, :status)
@@ -92,8 +336,7 @@ class CirculatorCoverageTest < Minitest::Test
 
       it "raises error when no method exists" do
         # This tests line 231 - the error case
-        sampler = Sampler.new
-        sampler.status = :pending
+        sampler = Sampler.new(status: :pending)
 
         assert_raises(RuntimeError, /Invalid action/) do
           sampler.flow(:nonexistent_action, :status)
@@ -102,8 +345,7 @@ class CirculatorCoverageTest < Minitest::Test
 
       it "accesses private flows method" do
         # This indirectly tests line 238 - the private flows method
-        sampler = Sampler.new
-        sampler.status = :pending
+        sampler = Sampler.new(status: :pending)
 
         # The flow method internally uses the private flows method
         sampler.flow(:approve, :status)
@@ -113,20 +355,7 @@ class CirculatorCoverageTest < Minitest::Test
 
     describe "Invalid action error in flow method" do
       it "raises error for invalid action in flow method" do
-        flow_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-            end
-          end
-        end
-
-        flow_object = flow_class.new
-        flow_object.status = :pending
+        flow_object = InvalidActionFlowSampler.new(status: :pending)
 
         # This action doesn't exist for pending state
         assert_raises(RuntimeError, /Invalid action/) do
@@ -152,23 +381,7 @@ class CirculatorCoverageTest < Minitest::Test
       end
 
       it "works with from option outside state block" do
-        allowed_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :user_role
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-            end
-
-            # This should work because we have from: option
-            action_allowed(:approve, from: :pending) { @user_role == "admin" }
-          end
-        end
-
-        allowed_object = allowed_class.new
-        allowed_object.status = :pending
+        allowed_object = ActionAllowedFromSampler.new(status: :pending)
         allowed_object.user_role = "user"
 
         # Should not transition because allow_if returns false
@@ -183,23 +396,7 @@ class CirculatorCoverageTest < Minitest::Test
 
     describe "action_allowed with nil from state" do
       it "handles action_allowed with nil from state" do
-        nil_allowed_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :can_initialize
-
-          def initialize
-            @can_initialize = false
-          end
-
-          circulator :status do
-            action :initialize, to: :pending, from: nil
-            action_allowed(:initialize, from: nil) { @can_initialize }
-          end
-        end
-
-        nil_allowed_object = nil_allowed_class.new
-        nil_allowed_object.status = nil
+        nil_allowed_object = NilAllowedSampler.new
 
         # Should not transition when can_initialize is false
         nil_allowed_object.status_initialize
@@ -212,29 +409,7 @@ class CirculatorCoverageTest < Minitest::Test
       end
 
       it "handles action_allowed with nil state in state block" do
-        nil_state_allowed_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :can_proceed
-
-          def initialize
-            @can_proceed = false
-          end
-
-          circulator :status do
-            state nil do
-              action :start, to: :pending
-              action_allowed(:start) { @can_proceed }
-            end
-
-            state :pending do
-              action :reset, to: nil
-            end
-          end
-        end
-
-        nil_state_object = nil_state_allowed_class.new
-        nil_state_object.status = nil
+        nil_state_object = NilStateAllowedSampler.new
 
         # Should not transition when can_proceed is false
         nil_state_object.status_start
@@ -253,22 +428,8 @@ class CirculatorCoverageTest < Minitest::Test
 
     describe "no_action getter" do
       it "returns the no_action proc when called without block" do
-        getter_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-            end
-
-            no_action { |attr, action| "Custom no action" }
-          end
-        end
-
         # Access the flow instance
-        flow = getter_class.instance_variable_get(:@flows).values.first.values.first
+        flow = NoActionGetterSampler.instance_variable_get(:@flows).values.first.values.first
 
         # Test the getter
         no_action_proc = flow.no_action
@@ -277,21 +438,8 @@ class CirculatorCoverageTest < Minitest::Test
       end
 
       it "returns the default no_action proc when not set" do
-        default_getter_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-            end
-            # Don't set a custom no_action
-          end
-        end
-
         # Access the flow instance
-        flow = default_getter_class.instance_variable_get(:@flows).values.first.values.first
+        flow = DefaultGetterSampler.instance_variable_get(:@flows).values.first.values.first
 
         # Test the getter returns the default proc
         no_action_proc = flow.no_action
@@ -305,26 +453,7 @@ class CirculatorCoverageTest < Minitest::Test
 
     describe "allow_if returning false" do
       it "does not transition when allow_if returns false" do
-        allow_if_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :transition_count
-
-          def initialize
-            @transition_count = 0
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: -> { false } do
-                @transition_count += 1
-              end
-            end
-          end
-        end
-
-        allow_if_object = allow_if_class.new
-        allow_if_object.status = :pending
+        allow_if_object = AllowIfFalseSampler.new(status: :pending)
 
         # Should not transition or execute block
         allow_if_object.status_approve
@@ -335,26 +464,7 @@ class CirculatorCoverageTest < Minitest::Test
 
     describe "transition with block execution" do
       it "executes transition block when present" do
-        block_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :block_executed
-
-          def initialize
-            @block_executed = false
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved do
-                @block_executed = true
-              end
-            end
-          end
-        end
-
-        block_object = block_class.new
-        block_object.status = :pending
+        block_object = TransitionBlockSampler.new(status: :pending)
 
         block_object.status_approve
         assert_equal :approved, block_object.status
@@ -364,24 +474,7 @@ class CirculatorCoverageTest < Minitest::Test
 
     describe "callable to option" do
       it "uses callable to option to determine next state" do
-        callable_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :next_state
-
-          def initialize
-            @next_state = :approved
-          end
-
-          circulator :status do
-            state :pending do
-              action :process, to: -> { @next_state }
-            end
-          end
-        end
-
-        callable_object = callable_class.new
-        callable_object.status = :pending
+        callable_object = CallableToSampleSampler.new(status: :pending)
         callable_object.next_state = :completed
 
         callable_object.status_process
@@ -391,33 +484,7 @@ class CirculatorCoverageTest < Minitest::Test
 
     describe "no transition found" do
       it "calls no_action when no transition found" do
-        no_transition_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :no_action_called
-
-          def initialize
-            @no_action_called = false
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-            end
-
-            state :approved do
-              # No actions defined for approved state
-            end
-
-            no_action do |attribute_name, action|
-              @no_action_called = true
-              # Don't raise an error, just track that it was called
-            end
-          end
-        end
-
-        no_transition_object = no_transition_class.new
-        no_transition_object.status = :approved
+        no_transition_object = NoTransitionSampler.new(status: :approved)
 
         # Try to approve from approved state (no transition defined)
         no_transition_object.status_approve
@@ -428,24 +495,7 @@ class CirculatorCoverageTest < Minitest::Test
 
     describe "flow with additional block" do
       it "executes additional block passed to flow method" do
-        additional_block_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :additional_block_executed
-
-          def initialize
-            @additional_block_executed = false
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-            end
-          end
-        end
-
-        additional_block_object = additional_block_class.new
-        additional_block_object.status = :pending
+        additional_block_object = AdditionalBlockSampler.new(status: :pending)
 
         additional_block_object.status_approve do
           @additional_block_executed = true
@@ -458,51 +508,9 @@ class CirculatorCoverageTest < Minitest::Test
 
     describe "flow target responds but self does not" do
       it "delegates to flow_target when self doesn't respond to method" do
-        # Create a Task class
-        task_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :completed
-
-          def self.name
-            "SpecialTask"
-          end
-
-          def initialize
-            @status = :pending
-            @completed = false
-          end
-
-          circulator :status do
-            state :pending do
-              action :complete, to: :done do
-                @completed = true
-              end
-            end
-          end
-
-          # Manually define the prefixed method that would be called from manager
-          # This simulates the method that would exist if manager had defined flows for task
-          define_method :special_task_status_complete do |*args, **kwargs, &block|
-            # Delegate to the regular method
-            status_complete(*args, **kwargs, &block)
-          end
-        end
-
-        # Create a Manager class that doesn't have the method
-        manager_class = Class.new do
-          extend Circulator
-
-          def self.name
-            "TaskManager"
-          end
-
-          # Manager doesn't define any flows or methods for special_task_status
-        end
-
         # Create instances
-        task = task_class.new
-        manager = manager_class.new
+        task = SpecialTaskSampler.new
+        manager = TaskManagerSampler.new
 
         # Verify initial state
         assert_equal :pending, task.status
@@ -528,23 +536,7 @@ class CirculatorCoverageTest < Minitest::Test
 
     describe "non-symbol status values" do
       it "handles integer status values" do
-        integer_status_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          circulator :status do
-            state 0 do
-              action :increment, to: 1
-            end
-            state 1 do
-              action :increment, to: 2
-            end
-          end
-        end
-
-        integer_object = integer_status_class.new
-        integer_object.status = 0
+        integer_object = IntegerStatusSampler.new(status: 0)
 
         integer_object.status_increment
         assert_equal 1, integer_object.status
