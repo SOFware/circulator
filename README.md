@@ -294,6 +294,39 @@ class Payment
 end
 ```
 
+#### Handling Missing Transitions with `action_missing`
+
+By default, if you call an action on an object whose current state doesn't define a transition for that action, Circulator raises an error. Use `action_missing` (aliased as `no_action`) to customize this behavior.
+
+This is triggered when, for example, you call `order.status_ship` but the object is in `:pending` and `:ship` only has a transition defined from `:processing`.
+
+```ruby
+class Order
+  extend Circulator
+
+  attr_accessor :status
+
+  flow :status do
+    action_missing do |attribute_name, action|
+      Rails.logger.warn "No #{action} transition from #{send(attribute_name)} for #{attribute_name}"
+    end
+
+    state :pending do
+      action :process, to: :processing
+    end
+
+    state :processing do
+      action :ship, to: :shipped
+    end
+  end
+end
+
+order = Order.new
+order.status = :pending
+
+order.status_ship  # => logs warning instead of raising
+```
+
 #### Wrapping Transitions with `around`
 
 Use the `around` block to wrap all transitions in a flow with shared logic. The block receives a `transition` proc that you must call for the transition to execute:
