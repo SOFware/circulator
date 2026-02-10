@@ -78,6 +78,10 @@ class CirculatorBlendedStorageTest < Minitest::Test
             name
           end
 
+          def initialize(status: nil)
+            @status = status
+          end
+
           flow :status, flows_proc: test_flows_proc do
             state :pending do
               action :approve, to: :approved
@@ -119,6 +123,10 @@ class CirculatorBlendedStorageTest < Minitest::Test
             name
           end
 
+          def initialize(status: nil)
+            @status = status
+          end
+
           flow :status, flows_proc: counting_proc do
             state :pending do
               action :approve, to: :approved
@@ -153,6 +161,10 @@ class CirculatorBlendedStorageTest < Minitest::Test
 
           def self.to_s
             name
+          end
+
+          def initialize(status: nil)
+            @status = status
           end
 
           flow :status, flows_proc: blended_proc do
@@ -200,6 +212,10 @@ class CirculatorBlendedStorageTest < Minitest::Test
             name
           end
 
+          def initialize(status: nil)
+            @status = status
+          end
+
           flow :status, flows_proc: blended_proc do
             state :pending do
               action :approve, to: :approved do
@@ -210,8 +226,7 @@ class CirculatorBlendedStorageTest < Minitest::Test
         end
 
         # Test that both blocks are executed
-        instance = test_class.new
-        instance.status = :pending
+        instance = test_class.new(status: :pending)
         instance.status_approve
 
         assert instance.base_called, "Base block should be called"
@@ -242,6 +257,10 @@ class CirculatorBlendedStorageTest < Minitest::Test
             name
           end
 
+          def initialize(status: nil)
+            @status = status
+          end
+
           flow :status, flows_proc: blended_proc do
             state :pending do
               action :approve, to: :approved, allow_if: -> { @is_ready }
@@ -249,22 +268,22 @@ class CirculatorBlendedStorageTest < Minitest::Test
           end
         end
 
-        instance = test_class.new
-        instance.status = :pending
-
         # Should not approve if only base condition is true
+        instance = test_class.new(status: :pending)
         instance.is_ready = true
         instance.is_approved = false
         instance.status_approve
         assert_equal :pending, instance.status
 
         # Should not approve if only extension condition is true
+        instance = test_class.new(status: :pending)
         instance.is_ready = false
         instance.is_approved = true
         instance.status_approve
         assert_equal :pending, instance.status
 
         # Should approve if both conditions are true
+        instance = test_class.new(status: :pending)
         instance.is_ready = true
         instance.is_approved = true
         instance.status_approve
@@ -288,8 +307,9 @@ class CirculatorBlendedStorageTest < Minitest::Test
 
           attr_accessor :status, :execution_order
 
-          def initialize
+          def initialize(status: nil)
             @execution_order = []
+            @status = status
           end
 
           def self.name
@@ -309,8 +329,7 @@ class CirculatorBlendedStorageTest < Minitest::Test
           end
         end
 
-        instance = test_class.new
-        instance.status = :pending
+        instance = test_class.new(status: :pending)
         instance.status_approve
 
         # Base block should execute first, then extension block
@@ -341,6 +360,10 @@ class CirculatorBlendedStorageTest < Minitest::Test
             name
           end
 
+          def initialize(status: nil)
+            @status = status
+          end
+
           flow :status, flows_proc: blended_proc do
             state :pending do
               action :approve, to: :approved  # Base specifies one target
@@ -348,8 +371,7 @@ class CirculatorBlendedStorageTest < Minitest::Test
           end
         end
 
-        instance = test_class.new
-        instance.status = :pending
+        instance = test_class.new(status: :pending)
         instance.status_approve
 
         # With our merge logic, extension's :to takes precedence if defined
@@ -384,6 +406,10 @@ class CirculatorBlendedStorageTest < Minitest::Test
             name
           end
 
+          def initialize(status: nil)
+            @status = status
+          end
+
           flow :status, flows_proc: blended_proc do
             state :pending do
               action :approve, to: :approved do
@@ -393,8 +419,7 @@ class CirculatorBlendedStorageTest < Minitest::Test
           end
         end
 
-        instance = test_class.new
-        instance.status = :pending
+        instance = test_class.new(status: :pending)
         instance.status_approve
 
         assert_equal :approved, instance.status
@@ -430,6 +455,10 @@ class CirculatorBlendedStorageTest < Minitest::Test
             name
           end
 
+          def initialize(status: nil)
+            @status = status
+          end
+
           flow :status, flows_proc: blended_proc do
             state :pending do
               action :approve, to: :approved
@@ -441,15 +470,13 @@ class CirculatorBlendedStorageTest < Minitest::Test
           end
         end
 
-        instance = test_class.new
-        instance.status = :pending
-
         # Can use base actions
+        instance = test_class.new(status: :pending)
         instance.status_reject
         assert_equal :rejected, instance.status
 
         # Can use extension actions
-        instance.status = :pending
+        instance = test_class.new(status: :pending)
         instance.status_send_to_legal
         assert_equal :legal_review, instance.status
 
@@ -494,6 +521,10 @@ class CirculatorBlendedStorageTest < Minitest::Test
             name
           end
 
+          def initialize(status: nil)
+            @status = status
+          end
+
           flow :status, flows_proc: blended_proc do
             state :pending do
               action :approve, to: :approved do
@@ -504,8 +535,7 @@ class CirculatorBlendedStorageTest < Minitest::Test
           end
         end
 
-        instance = test_class.new
-        instance.status = :pending
+        instance = test_class.new(status: :pending)
         instance.status_approve
 
         # All three blocks should have executed
@@ -543,6 +573,10 @@ class CirculatorBlendedStorageTest < Minitest::Test
             name
           end
 
+          def initialize(status: nil)
+            @status = status
+          end
+
           flow :status, flows_proc: default_proc do
             state :pending do
               action :approve, to: :approved do
@@ -552,8 +586,7 @@ class CirculatorBlendedStorageTest < Minitest::Test
           end
         end
 
-        instance = test_class.new
-        instance.status = :pending
+        instance = test_class.new(status: :pending)
         instance.status_approve
 
         # With regular Hash, the extension's transition data completely replaces base

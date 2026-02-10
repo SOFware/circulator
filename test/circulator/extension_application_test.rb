@@ -6,6 +6,10 @@ class LateExtendedDoc
 
   attr_accessor :status
 
+  def initialize(status: nil)
+    @status = status
+  end
+
   flow :status do
     state :pending do
       action :approve, to: :approved
@@ -19,6 +23,10 @@ class MultiLateExtensionDoc
   extend Circulator
 
   attr_accessor :status
+
+  def initialize(status: nil)
+    @status = status
+  end
 
   flow :status do
     state :draft do
@@ -34,6 +42,10 @@ class NoDuplicatesDoc
 
   attr_accessor :status
 
+  def initialize(status: nil)
+    @status = status
+  end
+
   flow :status do
     state :pending do
       action :cancel, to: :cancelled
@@ -47,6 +59,10 @@ class ExistingInstanceDoc
   extend Circulator
 
   attr_accessor :status
+
+  def initialize(status: nil)
+    @status = status
+  end
 
   flow :status do
     state :active do
@@ -82,6 +98,10 @@ class CirculatorExtensionApplicationTest < Minitest::Test
 
         attr_accessor :status
 
+        def initialize(status: nil)
+          @status = status
+        end
+
         def self.name
           "TestDocument"
         end
@@ -99,8 +119,7 @@ class CirculatorExtensionApplicationTest < Minitest::Test
       end
 
       # Create an instance and verify extension actions are available
-      doc = klass.new
-      doc.status = :pending
+      doc = klass.new(status: :pending)
 
       # Should have base actions
       assert doc.respond_to?(:status_approve)
@@ -143,6 +162,10 @@ class CirculatorExtensionApplicationTest < Minitest::Test
 
         attr_accessor :status
 
+        def initialize(status: nil)
+          @status = status
+        end
+
         def self.name
           "Task"
         end
@@ -156,8 +179,7 @@ class CirculatorExtensionApplicationTest < Minitest::Test
         end
       end
 
-      task = klass.new
-      task.status = :todo
+      task = klass.new(status: :todo)
 
       # Should have actions from base and both extensions
       assert task.respond_to?(:status_complete)
@@ -174,6 +196,10 @@ class CirculatorExtensionApplicationTest < Minitest::Test
 
         attr_accessor :status
 
+        def initialize(status: nil)
+          @status = status
+        end
+
         def self.name
           "SimpleDoc"
         end
@@ -185,8 +211,7 @@ class CirculatorExtensionApplicationTest < Minitest::Test
         end
       end
 
-      doc = klass.new
-      doc.status = :pending
+      doc = klass.new(status: :pending)
 
       assert doc.respond_to?(:status_approve)
       doc.status_approve
@@ -207,6 +232,10 @@ class CirculatorExtensionApplicationTest < Minitest::Test
 
         attr_accessor :status
 
+        def initialize(status: nil)
+          @status = status
+        end
+
         def self.name
           "Task"
         end
@@ -218,8 +247,7 @@ class CirculatorExtensionApplicationTest < Minitest::Test
         end
       end
 
-      task = klass.new
-      task.status = :pending
+      task = klass.new(status: :pending)
 
       # Should NOT have Document extension
       refute task.respond_to?(:status_send_to_legal)
@@ -243,6 +271,10 @@ class CirculatorExtensionApplicationTest < Minitest::Test
 
         attr_accessor :status
 
+        def initialize(status: nil)
+          @status = status
+        end
+
         def self.name
           "Order"
         end
@@ -258,8 +290,7 @@ class CirculatorExtensionApplicationTest < Minitest::Test
         end
       end
 
-      order = klass.new
-      order.status = :pending
+      order = klass.new(status: :pending)
 
       # Should have both base and extension actions on :pending
       assert order.respond_to?(:status_process)
@@ -269,8 +300,7 @@ class CirculatorExtensionApplicationTest < Minitest::Test
     describe "extensions registered after flow is defined" do
       it "applies extension to existing flow" do
         # Verify base flow works
-        doc = LateExtendedDoc.new
-        doc.status = :pending
+        doc = LateExtendedDoc.new(status: :pending)
         assert doc.respond_to?(:status_approve)
 
         # Register extension AFTER flow is defined
@@ -320,8 +350,7 @@ class CirculatorExtensionApplicationTest < Minitest::Test
           state :approved
         end
 
-        obj = MultiLateExtensionDoc.new
-        obj.status = :draft
+        obj = MultiLateExtensionDoc.new(status: :draft)
 
         # All actions should be available
         assert obj.respond_to?(:status_submit)
@@ -347,8 +376,7 @@ class CirculatorExtensionApplicationTest < Minitest::Test
           end
         end
 
-        obj = NoDuplicatesDoc.new
-        obj.status = :processing
+        obj = NoDuplicatesDoc.new(status: :processing)
 
         # Action should work from new state
         obj.status_cancel
@@ -357,8 +385,7 @@ class CirculatorExtensionApplicationTest < Minitest::Test
 
       it "works with existing instances" do
         # Create instance before extension
-        obj = ExistingInstanceDoc.new
-        obj.status = :active
+        obj = ExistingInstanceDoc.new(status: :active)
 
         # Register extension
         Circulator.extension(:ExistingInstanceDoc, :status) do
@@ -421,6 +448,10 @@ class CirculatorExtensionApplicationTest < Minitest::Test
 
           attr_accessor :status
 
+          def initialize(status: nil)
+            @status = status
+          end
+
           def self.name
             "WrongAttribute"
           end
@@ -444,8 +475,7 @@ class CirculatorExtensionApplicationTest < Minitest::Test
         assert_equal 1, Circulator.extensions["WrongAttribute:other_status"].length
 
         # Original flow should be unchanged
-        obj = klass.new
-        obj.status = :pending
+        obj = klass.new(status: :pending)
         assert obj.respond_to?(:status_approve)
         refute obj.respond_to?(:other_status_test)
       ensure

@@ -3,11 +3,9 @@ require_relative "../sampler"
 
 class SamplerTest < Minitest::Test
   describe "Sampler comprehensive feature tests" do
-    let(:sampler) { Sampler.new }
-
     describe "Basic state transitions" do
       it "transitions through basic flow" do
-        sampler.status = :pending
+        sampler = Sampler.new(status: :pending)
 
         # Test approve action with block
         sampler.status_approve
@@ -21,7 +19,7 @@ class SamplerTest < Minitest::Test
       end
 
       it "executes reject action with block" do
-        sampler.status = :pending
+        sampler = Sampler.new(status: :pending)
         sampler.notes = "Initial"
 
         sampler.status_reject
@@ -31,7 +29,7 @@ class SamplerTest < Minitest::Test
       end
 
       it "handles hold and resume actions" do
-        sampler.status = :pending
+        sampler = Sampler.new(status: :pending)
 
         sampler.status_hold
         assert_equal :on_hold, sampler.status
@@ -41,14 +39,14 @@ class SamplerTest < Minitest::Test
       end
 
       it "transitions from approved to archived" do
-        sampler.status = :approved
+        sampler = Sampler.new(status: :approved)
 
         sampler.status_archive
         assert_equal :archived, sampler.status
       end
 
       it "cancels from on_hold state" do
-        sampler.status = :on_hold
+        sampler = Sampler.new(status: :on_hold)
 
         sampler.status_cancel
         assert_equal :cancelled, sampler.status
@@ -57,7 +55,7 @@ class SamplerTest < Minitest::Test
 
     describe "allow_if conditions" do
       it "blocks transition when allow_if returns false" do
-        sampler.status = :rejected
+        sampler = Sampler.new(status: :rejected)
         sampler.user_role = "user"
 
         sampler.status_reconsider
@@ -66,7 +64,7 @@ class SamplerTest < Minitest::Test
       end
 
       it "allows transition when allow_if returns true" do
-        sampler.status = :rejected
+        sampler = Sampler.new(status: :rejected)
         sampler.user_role = "admin"
 
         sampler.status_reconsider
@@ -77,7 +75,7 @@ class SamplerTest < Minitest::Test
 
     describe "no_action handler" do
       it "calls no_action when transition doesn't exist" do
-        sampler.status = :published
+        sampler = Sampler.new(status: :published)
 
         # Try an action that doesn't exist for published state
         sampler.status_approve
@@ -89,7 +87,7 @@ class SamplerTest < Minitest::Test
 
     describe "Callable to: option" do
       it "determines state based on condition" do
-        sampler.priority = :normal
+        sampler = Sampler.new(priority: :normal)
         sampler.approval_count = 2
 
         sampler.priority_escalate
@@ -98,7 +96,7 @@ class SamplerTest < Minitest::Test
       end
 
       it "uses different state based on condition" do
-        sampler.priority = :normal
+        sampler = Sampler.new(priority: :normal)
         sampler.approval_count = 5
 
         sampler.priority_escalate
@@ -107,7 +105,7 @@ class SamplerTest < Minitest::Test
       end
 
       it "resolves critical priority" do
-        sampler.priority = :critical
+        sampler = Sampler.new(priority: :critical)
 
         sampler.priority_resolve
         assert_equal :normal, sampler.priority
@@ -115,7 +113,7 @@ class SamplerTest < Minitest::Test
       end
 
       it "reduces priority from high to normal" do
-        sampler.priority = :high
+        sampler = Sampler.new(priority: :high)
 
         sampler.priority_reduce
         assert_equal :normal, sampler.priority
@@ -124,49 +122,49 @@ class SamplerTest < Minitest::Test
 
     describe "from: option without state blocks" do
       it "starts workflow from nil" do
-        sampler.workflow_state = nil
+        sampler = Sampler.new
 
         sampler.workflow_state_start
         assert_equal :in_progress, sampler.workflow_state
       end
 
       it "completes workflow" do
-        sampler.workflow_state = :in_progress
+        sampler = Sampler.new(workflow_state: :in_progress)
 
         sampler.workflow_state_complete
         assert_equal :completed, sampler.workflow_state
       end
 
       it "fails from in_progress" do
-        sampler.workflow_state = :in_progress
+        sampler = Sampler.new(workflow_state: :in_progress)
 
         sampler.workflow_state_fail
         assert_equal :failed, sampler.workflow_state
       end
 
       it "fails from completed" do
-        sampler.workflow_state = :completed
+        sampler = Sampler.new(workflow_state: :completed)
 
         sampler.workflow_state_fail
         assert_equal :failed, sampler.workflow_state
       end
 
       it "retries from failed" do
-        sampler.workflow_state = :failed
+        sampler = Sampler.new(workflow_state: :failed)
 
         sampler.workflow_state_retry
         assert_equal :in_progress, sampler.workflow_state
       end
 
       it "resets to nil from completed" do
-        sampler.workflow_state = :completed
+        sampler = Sampler.new(workflow_state: :completed)
 
         sampler.workflow_state_reset
         assert_nil sampler.workflow_state
       end
 
       it "resets to nil from failed" do
-        sampler.workflow_state = :failed
+        sampler = Sampler.new(workflow_state: :failed)
 
         sampler.workflow_state_reset
         assert_nil sampler.workflow_state
@@ -175,7 +173,7 @@ class SamplerTest < Minitest::Test
 
     describe "action_allowed in state block" do
       it "blocks begin_processing when not processor" do
-        sampler.processing_state = :idle
+        sampler = Sampler.new(processing_state: :idle)
         sampler.user_role = "user"
 
         sampler.processing_state_begin_processing
@@ -183,7 +181,7 @@ class SamplerTest < Minitest::Test
       end
 
       it "allows begin_processing when processor" do
-        sampler.processing_state = :idle
+        sampler = Sampler.new(processing_state: :idle)
         sampler.user_role = "processor"
 
         sampler.processing_state_begin_processing
@@ -193,7 +191,7 @@ class SamplerTest < Minitest::Test
 
     describe "Actions with arguments" do
       it "processes with result argument" do
-        sampler.processing_state = :processing
+        sampler = Sampler.new(processing_state: :processing)
 
         sampler.processing_state_complete("success")
         assert_equal :processed, sampler.processing_state
@@ -201,7 +199,7 @@ class SamplerTest < Minitest::Test
       end
 
       it "handles error with message" do
-        sampler.processing_state = :processing
+        sampler = Sampler.new(processing_state: :processing)
 
         sampler.processing_state_error("Connection timeout")
         assert_equal :error_state, sampler.processing_state
@@ -211,7 +209,7 @@ class SamplerTest < Minitest::Test
 
     describe "action_allowed with from option" do
       it "blocks reprocess when not admin" do
-        sampler.processing_state = :processed
+        sampler = Sampler.new(processing_state: :processed)
         sampler.user_role = "user"
 
         sampler.processing_state_reprocess
@@ -219,7 +217,7 @@ class SamplerTest < Minitest::Test
       end
 
       it "allows reprocess when admin" do
-        sampler.processing_state = :processed
+        sampler = Sampler.new(processing_state: :processed)
         sampler.user_role = "admin"
 
         sampler.processing_state_reprocess
@@ -229,7 +227,7 @@ class SamplerTest < Minitest::Test
 
     describe "flow method usage" do
       it "works with flow method for transitions" do
-        sampler.status = :pending
+        sampler = Sampler.new(status: :pending)
 
         sampler.flow(:approve, :status)
         assert_equal :approved, sampler.status
@@ -237,7 +235,7 @@ class SamplerTest < Minitest::Test
       end
 
       it "passes arguments through flow method" do
-        sampler.processing_state = :processing
+        sampler = Sampler.new(processing_state: :processing)
 
         sampler.flow(:complete, :processing_state, "test result")
         assert_equal :processed, sampler.processing_state
@@ -245,7 +243,7 @@ class SamplerTest < Minitest::Test
       end
 
       it "respects allow_if through flow method" do
-        sampler.status = :rejected
+        sampler = Sampler.new(status: :rejected)
         sampler.user_role = "user"
 
         sampler.flow(:reconsider, :status)
@@ -259,7 +257,7 @@ class SamplerTest < Minitest::Test
 
     describe "Block passing to transitions" do
       it "executes additional blocks passed to transition methods" do
-        sampler.status = :pending
+        sampler = Sampler.new(status: :pending)
         additional_executed = false
 
         sampler.status_approve do
@@ -273,7 +271,7 @@ class SamplerTest < Minitest::Test
       end
 
       it "executes blocks through flow method" do
-        sampler.status = :pending
+        sampler = Sampler.new(status: :pending)
         flow_block_executed = false
 
         sampler.flow(:approve, :status) do
@@ -287,7 +285,7 @@ class SamplerTest < Minitest::Test
       end
 
       it "passes arguments to additional blocks" do
-        sampler.processing_state = :processing
+        sampler = Sampler.new(processing_state: :processing)
         captured_args = nil
 
         sampler.processing_state_complete("result_value") do |*args|
@@ -326,7 +324,7 @@ class SamplerTest < Minitest::Test
     end
 
     it "manages its own status separately" do
-      manager.managed_status = :active
+      manager = SamplerManager.new(managed_status: :active)
 
       manager.managed_status_pause
       assert_equal :paused, manager.managed_status
@@ -337,10 +335,8 @@ class SamplerTest < Minitest::Test
   end
 
   describe "Edge cases and error conditions" do
-    let(:sampler) { Sampler.new }
-
     it "handles invalid action gracefully with no_action" do
-      sampler.status = :archived
+      sampler = Sampler.new(status: :archived)
 
       # archived has no actions defined
       sampler.status_approve
@@ -350,7 +346,7 @@ class SamplerTest < Minitest::Test
     end
 
     it "handles string status values" do
-      sampler.status = "pending"
+      sampler = Sampler.new(status: "pending")
 
       sampler.status_approve
       assert_equal :approved, sampler.status
@@ -358,7 +354,9 @@ class SamplerTest < Minitest::Test
 
     it "handles integer-like states" do
       # Test that non-symbol states work
-      sampler.workflow_state = 0
+      # Use send to bypass private writer for this edge case test
+      sampler = Sampler.new
+      sampler.send(:workflow_state=, 0)
 
       # This should call no_action since 0 isn't a defined state
       # Expect an error since we have default no_action behavior
@@ -370,16 +368,16 @@ class SamplerTest < Minitest::Test
   end
 
   describe "Complex interaction scenarios" do
-    let(:sampler) { Sampler.new }
-
     it "performs complete workflow" do
+      sampler = Sampler.new
+
       # Start with nil workflow
       assert_nil sampler.workflow_state
       sampler.workflow_state_start
       assert_equal :in_progress, sampler.workflow_state
 
       # Process something
-      sampler.processing_state = :idle
+      sampler = Sampler.new(workflow_state: :in_progress, processing_state: :idle)
       sampler.user_role = "processor"
       sampler.processing_state_begin_processing
       assert_equal :processing, sampler.processing_state
@@ -401,8 +399,7 @@ class SamplerTest < Minitest::Test
     end
 
     it "handles error recovery flow" do
-      sampler.workflow_state = :in_progress
-      sampler.processing_state = :processing
+      sampler = Sampler.new(workflow_state: :in_progress, processing_state: :processing)
 
       # Error occurs
       sampler.processing_state_error("Network issue")
@@ -416,8 +413,8 @@ class SamplerTest < Minitest::Test
       sampler.workflow_state_retry
       assert_equal :in_progress, sampler.workflow_state
 
-      # Fix processing
-      sampler.processing_state = :idle
+      # Fix processing - need new sampler with idle processing state
+      sampler = Sampler.new(workflow_state: :in_progress, processing_state: :idle)
       sampler.user_role = "processor"
       sampler.processing_state_begin_processing
       sampler.processing_state_complete("Success on retry")
@@ -430,11 +427,8 @@ class SamplerTest < Minitest::Test
   end
 
   describe "NestedDependencySampler hash-based allow_if" do
-    let(:nested_sampler) { NestedDependencySampler.new }
-
     it "blocks publish when review is not approved" do
-      nested_sampler.document_status = :submitted
-      nested_sampler.review_status = :pending
+      nested_sampler = NestedDependencySampler.new(document_status: :submitted, review_status: :pending)
 
       nested_sampler.document_status_publish
       assert_equal :submitted, nested_sampler.document_status
@@ -442,8 +436,7 @@ class SamplerTest < Minitest::Test
     end
 
     it "blocks publish when review is in progress" do
-      nested_sampler.document_status = :submitted
-      nested_sampler.review_status = :in_review
+      nested_sampler = NestedDependencySampler.new(document_status: :submitted, review_status: :in_review)
 
       nested_sampler.document_status_publish
       assert_equal :submitted, nested_sampler.document_status
@@ -451,8 +444,7 @@ class SamplerTest < Minitest::Test
     end
 
     it "blocks publish when review is rejected" do
-      nested_sampler.document_status = :submitted
-      nested_sampler.review_status = :rejected
+      nested_sampler = NestedDependencySampler.new(document_status: :submitted, review_status: :rejected)
 
       nested_sampler.document_status_publish
       assert_equal :submitted, nested_sampler.document_status
@@ -460,8 +452,7 @@ class SamplerTest < Minitest::Test
     end
 
     it "allows publish when review is approved" do
-      nested_sampler.document_status = :submitted
-      nested_sampler.review_status = :approved
+      nested_sampler = NestedDependencySampler.new(document_status: :submitted, review_status: :approved)
 
       nested_sampler.document_status_publish
       assert_equal :published, nested_sampler.document_status
@@ -469,8 +460,7 @@ class SamplerTest < Minitest::Test
     end
 
     it "allows publish when review is final" do
-      nested_sampler.document_status = :submitted
-      nested_sampler.review_status = :final
+      nested_sampler = NestedDependencySampler.new(document_status: :submitted, review_status: :final)
 
       nested_sampler.document_status_publish
       assert_equal :published, nested_sampler.document_status
@@ -479,8 +469,7 @@ class SamplerTest < Minitest::Test
 
     it "executes full workflow with dependencies" do
       # Start with draft document
-      nested_sampler.document_status = :draft
-      nested_sampler.review_status = :pending
+      nested_sampler = NestedDependencySampler.new(document_status: :draft, review_status: :pending)
 
       # Submit document
       nested_sampler.document_status_submit
@@ -511,8 +500,7 @@ class SamplerTest < Minitest::Test
 
     it "handles rejection and resubmission workflow" do
       # Submit document
-      nested_sampler.document_status = :submitted
-      nested_sampler.review_status = :in_review
+      nested_sampler = NestedDependencySampler.new(document_status: :submitted, review_status: :in_review)
 
       # Reject review
       nested_sampler.review_status_reject
@@ -538,8 +526,7 @@ class SamplerTest < Minitest::Test
     end
 
     it "handles string state values in dependency check" do
-      nested_sampler.document_status = :submitted
-      nested_sampler.review_status = "approved"  # String instead of symbol
+      nested_sampler = NestedDependencySampler.new(document_status: :submitted, review_status: "approved")
 
       nested_sampler.document_status_publish
       assert_equal :published, nested_sampler.document_status

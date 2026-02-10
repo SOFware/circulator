@@ -306,6 +306,15 @@ module Circulator
       next if state.nil?
       define_state_method(attribute_name:, state:, object:, owner: flow_module)
     end
+
+    # Make the attribute writer private so that state changes must go through
+    # the generated flow methods. This prevents bypassing guards and transition
+    # logic by directly assigning the attribute. The writer is only made private
+    # for self-managed flows (not model-based flows where the attribute belongs
+    # to a different class).
+    if object.nil? && method_defined?("#{attribute_name}=")
+      private "#{attribute_name}="
+    end
   end
   alias_method :circulator, :flow
 

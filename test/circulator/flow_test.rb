@@ -1,4 +1,5 @@
 require "test_helper"
+require_relative "../sampler"
 
 class ManagerTest
   extend Circulator
@@ -17,219 +18,791 @@ class TestTask
   attr_accessor :status
 end
 
-class CirculatorFlowTest < Minitest::Test
-  describe "Flow state machine behavior" do
-    let(:flow_class) do
-      Class.new do
-        extend Circulator
+class FlowWithArgsSampler
+  extend Circulator
 
-        attr_accessor :status, :counter, :user_role, :notes, :approval_count
+  attr_accessor :status, :args_received
 
-        def initialize
-          @approval_count = 0
-        end
+  def initialize(status: nil)
+    @status = status
+  end
 
-        circulator :status do
-          state :pending do
-            action :approve, to: :approved do
-              @approval_count += 1
-            end
-            action :reject, to: :rejected do
-              @notes = "Rejected: #{@notes}"
-            end
-            action :hold, to: :on_hold
-            action_allowed(:approve) { @user_role == "admin" || @user_role == "manager" }
-          end
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved do |*args, **kwargs|
+        @args_received = {args: args, kwargs: kwargs}
+      end
+    end
+  end
+end
 
-          state :on_hold do
-            action :approve, to: :approved do
-              @approval_count += 1
-            end
-            action :reject, to: :rejected do
-              @notes = "Rejected: #{@notes}"
-            end
-            action_allowed(:approve) { @user_role == "admin" || @user_role == "manager" }
-          end
+class NilStateSampler
+  extend Circulator
 
-          state :approved do
-            action :publish, to: :published do
-              @notes = "Published: #{@notes}"
-            end
-            action :request_changes, to: :pending do
-              @notes = "Changes requested: #{@notes}"
-            end
-          end
+  attr_accessor :status
 
-          state :rejected do
-            action :resubmit, to: :pending do
-              @notes = "Resubmitted: #{@notes}"
-            end
-          end
+  def initialize(status: nil)
+    @status = status
+  end
 
-          state :published do
-            action :archive, to: :archived
-          end
+  circulator :status do
+    state nil do
+      action :initialize, to: :pending
+    end
+    state :pending do
+      action :clear, to: nil
+    end
+  end
+end
 
-          state :archived do
-            action :restore, to: :published
-          end
+class SkipMethodSampler
+  extend Circulator
 
-          state :override_archive do
-            action :restore, to: :published
-          end
-        end
-        # Test for overriding the flow method and calling super
-        def status_archive
-          super
-          @status = "override_archive"
-        end
+  attr_accessor :status
+
+  def initialize(status: nil)
+    @status = status
+  end
+
+  # First flow defines state
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved
+    end
+  end
+
+  # Second flow with same attribute and same state
+  # Should skip creating status_pending? since it already exists
+  circulator :status do
+    state :pending do
+      action :complete, to: :done
+    end
+    state :approved do
+      action :finalize, to: :finalized
+    end
+  end
+end
+
+class NoActionBehaviorSampler
+  extend Circulator
+
+  attr_accessor :error_status, :side_effect_status, :track_status,
+    :default_status, :multi_status,
+    :side_effect_count, :last_action_attempted,
+    :no_action_called, :call_count
+
+  def initialize(error_status: nil, side_effect_status: nil, track_status: nil,
+    default_status: nil, multi_status: nil)
+    @error_status = error_status
+    @side_effect_status = side_effect_status
+    @track_status = track_status
+    @default_status = default_status
+    @multi_status = multi_status
+    @side_effect_count = 0
+    @last_action_attempted = nil
+    @no_action_called = false
+    @call_count = 0
+  end
+
+  circulator :error_status do
+    state :pending do
+      action :approve, to: :approved
+      action :reject, to: :rejected, from: :approved
+    end
+
+    no_action do |attribute_name, action|
+      raise "Custom error: Cannot perform #{action} on #{attribute_name}"
+    end
+  end
+
+  circulator :side_effect_status do
+    state :pending do
+      action :approve, to: :approved
+      action :reject, to: :rejected, from: :approved
+      action :publish, to: :published, from: :approved
+    end
+
+    no_action do |attribute_name, action|
+      @side_effect_count += 1
+      @last_action_attempted = action
+    end
+  end
+
+  circulator :track_status do
+    state :pending do
+      action :approve, to: :approved
+      action :reject, to: :rejected, from: :approved
+    end
+
+    no_action do |attribute_name, action|
+      @no_action_called = true
+    end
+  end
+
+  circulator :default_status do
+    state :pending do
+      action :approve, to: :approved
+      action :reject, to: :rejected, from: :approved
+    end
+  end
+
+  circulator :multi_status do
+    state :pending do
+      action :approve, to: :approved
+      action :reject, to: :rejected, from: :approved
+    end
+
+    no_action do |attribute_name, action|
+      @call_count += 1
+    end
+
+    no_action do |attribute_name, action|
+      @call_count += 10
+    end
+  end
+end
+
+class CallableToConditionalSampler
+  extend Circulator
+
+  attr_accessor :status, :user_role, :transition_count
+
+  def initialize(status: nil)
+    @status = status
+    @transition_count = 0
+  end
+
+  circulator :status do
+    state :pending do
+      action :approve, to: -> {
+        @transition_count += 1
+        :approved
+      }, allow_if: -> { @user_role == "admin" }
+    end
+  end
+end
+
+class CallableToComplexSampler
+  extend Circulator
+
+  attr_accessor :status, :log, :timestamp
+
+  def initialize(status: nil)
+    @status = status
+    @log = []
+    @timestamp = nil
+  end
+
+  circulator :status do
+    state :pending do
+      action :complete, to: ->(user, note = nil) do
+        @timestamp = Time.now
+        @log << "Completed by #{user}"
+        @log << "Note: #{note}" if note
+        @log << "Timestamp: #{@timestamp}"
+        :completed
+      end
+    end
+  end
+end
+
+class CallableToEdgeCasesSampler
+  extend Circulator
+
+  attr_accessor :nil_return, :string_return, :conditional_return, :should_clear
+
+  def initialize(nil_return: nil, string_return: nil, conditional_return: nil)
+    @nil_return = nil_return
+    @string_return = string_return
+    @conditional_return = conditional_return
+  end
+
+  circulator :nil_return do
+    state :pending do
+      action :process, to: -> {}
+      action :invalid, to: -> { "invalid_state" }
+    end
+  end
+
+  circulator :string_return do
+    state :pending do
+      action :approve, to: -> { "approved" }
+    end
+  end
+
+  circulator :conditional_return do
+    state :pending do
+      action :conditional_clear, to: -> { @should_clear ? nil : :approved }
+    end
+  end
+end
+
+class NilTransitionsSampler
+  extend Circulator
+
+  attr_accessor :conditional_status, :block_status, :string_status, :no_action_status,
+    :user_role, :transition_count, :execution_order, :no_action_called
+
+  def initialize(conditional_status: nil, block_status: nil, string_status: nil,
+    no_action_status: nil)
+    @conditional_status = conditional_status
+    @block_status = block_status
+    @string_status = string_status
+    @no_action_status = no_action_status
+    @transition_count = 0
+    @execution_order = []
+    @no_action_called = false
+  end
+
+  circulator :conditional_status do
+    state :pending do
+      action :clear, to: nil, allow_if: -> { @user_role == "admin" } do
+        @transition_count += 1
       end
     end
 
-    let(:flow_object) { flow_class.new }
+    action :initialize, to: :pending, from: nil, allow_if: -> { @user_role == "admin" } do
+      @transition_count += 1
+    end
+  end
 
-    describe "basic state transitions" do
-      before do
-        flow_object.status = :pending
-        flow_object.counter = 0
-        flow_object.approval_count = 0
-        flow_object.notes = "Initial submission"
+  circulator :block_status do
+    state :pending do
+      action :clear, to: nil do
+        @execution_order << "transition_block"
       end
+    end
 
+    action :initialize, to: :pending, from: nil do
+      @execution_order << "transition_block"
+    end
+  end
+
+  circulator :string_status do
+    state :pending do
+      action :clear, to: nil
+    end
+
+    action :initialize, to: :pending, from: nil
+  end
+
+  circulator :no_action_status do
+    state :pending do
+      action :clear, to: nil
+      action :approve, to: :approved
+    end
+
+    action :clear, to: nil, from: nil
+
+    no_action do |attribute_name, action|
+      @no_action_called = true
+    end
+  end
+end
+
+class CallableToBlockInteractionSampler
+  extend Circulator
+
+  attr_accessor :order_status, :exec_status, :execution_order, :block_executed, :final_state
+
+  def initialize(order_status: nil, exec_status: nil)
+    @order_status = order_status
+    @exec_status = exec_status
+    @execution_order = []
+    @block_executed = false
+    @final_state = nil
+  end
+
+  circulator :order_status do
+    state :pending do
+      action :process, to: -> {
+        @execution_order << "callable_to"
+        :processed
+      } do
+        @execution_order << "transition_block"
+      end
+    end
+  end
+
+  circulator :exec_status do
+    state :pending do
+      action :process, to: -> {
+        @final_state = :processed
+        :approved
+      } do
+        @block_executed = true
+      end
+    end
+  end
+end
+
+class StringBlockSampler
+  extend Circulator
+
+  attr_accessor :status, :block_executed
+
+  def initialize(status: nil)
+    @status = status
+    @block_executed = false
+  end
+
+  circulator :status do
+    state :pending do
+      action :approve, to: "approved"
+    end
+  end
+end
+
+class FromBlockSampler
+  extend Circulator
+
+  attr_accessor :status, :block_executed
+
+  def initialize(status: nil)
+    @status = status
+    @block_executed = false
+  end
+
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved
+    end
+
+    action :reset, to: :pending, from: [:approved, :rejected] do
+      @execution_order ||= []
+      @execution_order << "transition_block"
+    end
+  end
+end
+
+class BlockExecutionOrderSampler
+  extend Circulator
+
+  attr_accessor :multi_step, :full_order, :execution_order, :counter
+
+  def initialize(multi_step: nil, full_order: nil)
+    @multi_step = multi_step
+    @full_order = full_order
+    @execution_order = []
+    @counter = 0
+  end
+
+  circulator :multi_step do
+    state :pending do
+      action :process, to: -> {
+        @counter += 1
+        :processing
+      } do
+        @execution_order << "transition_block"
+      end
+    end
+
+    state :processing do
+      action :complete, to: :completed do
+        @execution_order << "transition_block"
+      end
+    end
+  end
+
+  circulator :full_order do
+    state :pending do
+      action :process, to: ->(*, **) {
+        @execution_order << "callable_to"
+        :processing
+      }, allow_if: ->(*args, **kwargs) { true } do |*args, **kwargs|
+        @execution_order << "transition_block"
+      end
+    end
+  end
+end
+
+class HashAllowIfValidSampler
+  extend Circulator
+
+  attr_accessor :status, :priority
+
+  def initialize(status: nil, priority: nil)
+    @status = status
+    @priority = priority
+  end
+
+  circulator :priority do
+    state :low do
+      action :escalate, to: :high
+    end
+
+    state :high do
+      action :escalate, to: :critical
+    end
+  end
+
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved, allow_if: {priority: [:high, :critical]}
+    end
+  end
+end
+
+class HashAllowIfFromSampler
+  extend Circulator
+
+  attr_accessor :status, :priority
+
+  def initialize(status: nil, priority: nil)
+    @status = status
+    @priority = priority
+  end
+
+  circulator :priority do
+    state :low do
+    end
+
+    state :high do
+    end
+  end
+
+  circulator :status do
+    action :approve, to: :approved, from: :pending, allow_if: {priority: [:high]}
+  end
+end
+
+class HashAllowIfNonSymbolValidStatesSampler
+  extend Circulator
+
+  attr_accessor :status, :level
+
+  def initialize(status: nil, level: nil)
+    @status = status
+    @level = level
+  end
+
+  circulator :level do
+    state :basic do
+    end
+
+    state :advanced do
+    end
+
+    state "premium" do
+    end
+
+    state 99 do
+    end
+  end
+
+  circulator :status do
+    state :pending do
+      # Use symbols, strings, and integers in the valid_states array
+      action :process, to: :processed, allow_if: {level: [:advanced, "premium", 99]}
+    end
+  end
+end
+
+class AvailableFlowsSampler
+  extend Circulator
+
+  attr_accessor :basic, :terminal, :simple
+
+  def initialize(basic: nil, terminal: nil, simple: nil)
+    @basic = basic
+    @terminal = terminal
+    @simple = simple
+  end
+
+  circulator :basic do
+    state :pending do
+      action :approve, to: :approved
+      action :reject, to: :rejected
+    end
+
+    state :approved do
+      action :archive, to: :archived
+    end
+
+    state :rejected
+    state :archived
+  end
+
+  circulator :terminal do
+    state :pending do
+      action :approve, to: :approved
+    end
+
+    state :approved
+  end
+
+  circulator :simple do
+    state :pending do
+      action :approve, to: :approved
+    end
+  end
+end
+
+class AvailableFlowsGuardedSampler
+  extend Circulator
+
+  attr_accessor :conditional, :symbolic, :ready
+
+  def initialize(conditional: nil, symbolic: nil)
+    @conditional = conditional
+    @symbolic = symbolic
+  end
+
+  def ready?
+    ready
+  end
+
+  circulator :conditional do
+    state :pending do
+      action :approve, to: :approved, allow_if: -> { ready }
+      action :reject, to: :rejected
+    end
+  end
+
+  circulator :symbolic do
+    state :pending do
+      action :approve, to: :approved, allow_if: :ready?
+      action :reject, to: :rejected
+    end
+  end
+end
+
+class AvailableFlowsHashSampler
+  extend Circulator
+
+  attr_accessor :status, :review_status
+
+  def initialize(status: nil, review_status: nil)
+    @status = status
+    @review_status = review_status
+  end
+
+  circulator :review_status do
+    state :pending do
+      action :approve_review, to: :approved
+    end
+
+    state :approved
+  end
+
+  circulator :status do
+    state :draft do
+      action :publish, to: :published, allow_if: {review_status: :approved}
+      action :submit, to: :submitted
+    end
+  end
+end
+
+class AvailableFlowsArgsSampler
+  extend Circulator
+
+  attr_accessor :proc_arg, :symbol_arg, :kwargs_arg
+
+  def initialize(proc_arg: nil, symbol_arg: nil, kwargs_arg: nil)
+    @proc_arg = proc_arg
+    @symbol_arg = symbol_arg
+    @kwargs_arg = kwargs_arg
+  end
+
+  def can_approve?(min_level)
+    min_level >= 5
+  end
+
+  def can_approve_kwargs?(level:, priority:)
+    level >= 5 && priority == :high
+  end
+
+  circulator :proc_arg do
+    state :pending do
+      action :approve, to: :approved, allow_if: ->(min_level) { min_level >= 5 }
+      action :reject, to: :rejected
+    end
+  end
+
+  circulator :symbol_arg do
+    state :pending do
+      action :approve, to: :approved, allow_if: :can_approve?
+      action :reject, to: :rejected
+    end
+  end
+
+  circulator :kwargs_arg do
+    state :pending do
+      action :approve, to: :approved, allow_if: :can_approve_kwargs?
+      action :reject, to: :rejected
+    end
+  end
+end
+
+class ArrayAllowIfSampler
+  extend Circulator
+
+  attr_accessor :status, :approved, :in_budget
+
+  def initialize(status: nil)
+    @status = status
+    @approved = false
+    @in_budget = false
+  end
+
+  def approved?
+    @approved
+  end
+
+  def in_budget?
+    @in_budget
+  end
+
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved, allow_if: [:approved?, :in_budget?]
+    end
+  end
+end
+
+class MixedAllowIfCheckSampler
+  extend Circulator
+
+  attr_accessor :status, :admin
+
+  def initialize(status: nil)
+    @status = status
+  end
+
+  def check?
+    true
+  end
+
+  circulator :status do
+    state :pending do
+      action :approve, to: :approved, allow_if: [:check?, -> { @admin }]
+    end
+  end
+end
+
+class FlowMergeSampler
+  extend Circulator
+
+  attr_accessor :status, :counter
+
+  def initialize
+    @counter = 0
+  end
+
+  def admin?
+    true
+  end
+end
+
+class CirculatorFlowTest < Minitest::Test
+  describe "Flow state machine behavior" do
+    describe "basic state transitions" do
       it "transitions from pending to approved" do
-        flow_object.user_role = "manager"
-        flow_object.status_approve
-        assert_equal :approved, flow_object.status
+        obj = FlowClassSampler.new(status: :pending, counter: 0, approval_count: 0, notes: "Initial submission")
+        obj.user_role = "manager"
+        obj.status_approve
+        assert_equal :approved, obj.status
       end
 
       it "transitions from pending to rejected" do
-        flow_object.status_reject
-        assert_equal :rejected, flow_object.status
+        obj = FlowClassSampler.new(status: :pending, counter: 0, approval_count: 0, notes: "Initial submission")
+        obj.status_reject
+        assert_equal :rejected, obj.status
       end
 
       it "transitions from pending to on_hold" do
-        flow_object.status_hold
-        assert_equal :on_hold, flow_object.status
+        obj = FlowClassSampler.new(status: :pending, counter: 0, approval_count: 0, notes: "Initial submission")
+        obj.status_hold
+        assert_equal :on_hold, obj.status
       end
 
       it "executes transition blocks" do
-        flow_object.user_role = "admin"
-        flow_object.status_approve
-        assert_equal :approved, flow_object.status
-        assert_equal 1, flow_object.approval_count
+        obj = FlowClassSampler.new(status: :pending, counter: 0, approval_count: 0, notes: "Initial submission")
+        obj.user_role = "admin"
+        obj.status_approve
+        assert_equal :approved, obj.status
+        assert_equal 1, obj.approval_count
       end
 
       it "updates notes during rejection" do
-        flow_object.status_reject
-        assert_equal :rejected, flow_object.status
-        assert_equal "Rejected: Initial submission", flow_object.notes
+        obj = FlowClassSampler.new(status: :pending, counter: 0, approval_count: 0, notes: "Initial submission")
+        obj.status_reject
+        assert_equal :rejected, obj.status
+        assert_equal "Rejected: Initial submission", obj.notes
       end
     end
 
     describe "conditional transitions" do
-      before do
-        flow_object.status = :pending
-        flow_object.approval_count = 0
-      end
-
       it "allows approval for admin users" do
-        flow_object.user_role = "admin"
-        flow_object.status_approve
-        assert_equal :approved, flow_object.status
-        assert_equal 1, flow_object.approval_count
+        obj = FlowClassSampler.new(status: :pending, approval_count: 0)
+        obj.user_role = "admin"
+        obj.status_approve
+        assert_equal :approved, obj.status
+        assert_equal 1, obj.approval_count
       end
 
       it "allows approval for manager users" do
-        flow_object.user_role = "manager"
-        flow_object.status_approve
-        assert_equal :approved, flow_object.status
-        assert_equal 1, flow_object.approval_count
+        obj = FlowClassSampler.new(status: :pending, approval_count: 0)
+        obj.user_role = "manager"
+        obj.status_approve
+        assert_equal :approved, obj.status
+        assert_equal 1, obj.approval_count
       end
 
       it "prevents approval for regular users" do
-        flow_object.user_role = "user"
-        flow_object.status_approve
-        assert_equal :pending, flow_object.status
-        assert_equal 0, flow_object.approval_count
+        obj = FlowClassSampler.new(status: :pending, approval_count: 0)
+        obj.user_role = "user"
+        obj.status_approve
+        assert_equal :pending, obj.status
+        assert_equal 0, obj.approval_count
       end
 
       it "prevents approval for nil user role" do
-        flow_object.user_role = nil
-        flow_object.status_approve
-        assert_equal :pending, flow_object.status
-        assert_equal 0, flow_object.approval_count
+        obj = FlowClassSampler.new(status: :pending, approval_count: 0)
+        obj.user_role = nil
+        obj.status_approve
+        assert_equal :pending, obj.status
+        assert_equal 0, obj.approval_count
       end
     end
 
     describe "symbol-based allow_if" do
-      let(:symbol_allow_if_class) do
-        Class.new do
-          extend Circulator
-
-          attr_accessor :status, :active, :premium_user
-
-          def active?
-            @active == true
-          end
-
-          def premium?
-            @premium_user == true
-          end
-
-          circulator :status do
-            state :pending do
-              action :activate, to: :active, allow_if: :active?
-              action :upgrade, to: :premium, allow_if: :premium?
-            end
-
-            state :active do
-              action :deactivate, to: :inactive
-            end
-
-            state :premium
-            state :inactive
-          end
-        end
-      end
-
-      let(:symbol_allow_if_object) { symbol_allow_if_class.new }
-
       it "allows transition when symbol method returns true" do
-        symbol_allow_if_object.status = :pending
-        symbol_allow_if_object.active = true
+        obj = SymbolAllowIfSampler.new(status: :pending)
+        obj.active = true
 
-        symbol_allow_if_object.status_activate
-        assert_equal :active, symbol_allow_if_object.status
+        obj.status_activate
+        assert_equal :active, obj.status
       end
 
       it "prevents transition when symbol method returns false" do
-        symbol_allow_if_object.status = :pending
-        symbol_allow_if_object.active = false
+        obj = SymbolAllowIfSampler.new(status: :pending)
+        obj.active = false
 
-        symbol_allow_if_object.status_activate
-        assert_equal :pending, symbol_allow_if_object.status
+        obj.status_activate
+        assert_equal :pending, obj.status
       end
 
       it "prevents transition when symbol method returns nil" do
-        symbol_allow_if_object.status = :pending
-        symbol_allow_if_object.active = nil
+        obj = SymbolAllowIfSampler.new(status: :pending)
+        obj.active = nil
 
-        symbol_allow_if_object.status_activate
-        assert_equal :pending, symbol_allow_if_object.status
+        obj.status_activate
+        assert_equal :pending, obj.status
       end
 
       it "works with multiple symbol-based allow_if conditions" do
-        symbol_allow_if_object.status = :pending
+        obj = SymbolAllowIfSampler.new(status: :pending)
 
         # First action requires active? to be true
-        symbol_allow_if_object.active = false
-        symbol_allow_if_object.status_activate
-        assert_equal :pending, symbol_allow_if_object.status
+        obj.active = false
+        obj.status_activate
+        assert_equal :pending, obj.status
 
         # Second action requires premium? to be true
-        symbol_allow_if_object.premium_user = true
-        symbol_allow_if_object.status_upgrade
-        assert_equal :premium, symbol_allow_if_object.status
+        obj.premium_user = true
+        obj.status_upgrade
+        assert_equal :premium, obj.status
       end
 
       it "raises ArgumentError when method doesn't exist" do
@@ -250,65 +823,23 @@ class CirculatorFlowTest < Minitest::Test
       end
 
       it "works with transition blocks" do
-        block_class = Class.new do
-          extend Circulator
+        block_object = SymbolAllowIfSampler.new(block_status: :pending, active: true)
 
-          attr_accessor :status, :activated_count
-
-          def initialize
-            @activated_count = 0
-          end
-
-          def active?
-            true
-          end
-
-          circulator :status do
-            state :pending do
-              action :activate, to: :active, allow_if: :active? do
-                @activated_count += 1
-              end
-            end
-          end
-        end
-
-        block_object = block_class.new
-        block_object.status = :pending
-
-        block_object.status_activate
-        assert_equal :active, block_object.status
+        block_object.block_status_activate
+        assert_equal :active, block_object.block_status
         assert_equal 1, block_object.activated_count
       end
 
       it "is equivalent to proc-based allow_if" do
-        proc_class = Class.new do
-          extend Circulator
+        obj = SymbolAllowIfSampler.new(status: :pending, proc_status: :pending, active: true)
 
-          attr_accessor :status, :active
+        # Test symbol-based
+        obj.status_activate
+        symbol_result = obj.status
 
-          def active?
-            @active == true
-          end
-
-          circulator :status do
-            state :pending do
-              action :activate, to: :active, allow_if: -> { active? }
-            end
-          end
-        end
-
-        # Test with symbol-based
-        symbol_allow_if_object.status = :pending
-        symbol_allow_if_object.active = true
-        symbol_allow_if_object.status_activate
-        symbol_result = symbol_allow_if_object.status
-
-        # Test with proc-based
-        proc_object = proc_class.new
-        proc_object.status = :pending
-        proc_object.active = true
-        proc_object.status_activate
-        proc_result = proc_object.status
+        # Test proc-based
+        obj.proc_status_activate
+        proc_result = obj.proc_status
 
         # Both should have same result
         assert_equal :active, symbol_result
@@ -318,95 +849,75 @@ class CirculatorFlowTest < Minitest::Test
 
     describe "complex workflow scenarios" do
       it "handles complete approval workflow" do
-        flow_object.status = :pending
-        flow_object.user_role = "admin"
-        flow_object.approval_count = 0
-        flow_object.notes = "Initial submission"
+        obj = FlowClassSampler.new(status: :pending, approval_count: 0, notes: "Initial submission")
+        obj.user_role = "admin"
 
         # Approve
-        flow_object.status_approve
-        assert_equal :approved, flow_object.status
-        assert_equal 1, flow_object.approval_count
+        obj.status_approve
+        assert_equal :approved, obj.status
+        assert_equal 1, obj.approval_count
 
         # Publish
-        flow_object.status_publish
-        assert_equal :published, flow_object.status
-        assert_equal "Published: Initial submission", flow_object.notes
+        obj.status_publish
+        assert_equal :published, obj.status
+        assert_equal "Published: Initial submission", obj.notes
 
         # Archive
-        flow_object.status_archive
-        assert_equal "override_archive", flow_object.status
+        obj.status_archive
+        assert_equal "override_archive", obj.status
 
         # Restore
-        flow_object.status_restore
-        assert_equal :published, flow_object.status
+        obj.status_restore
+        assert_equal :published, obj.status
       end
 
       it "handles rejection and resubmission workflow" do
-        flow_object.status = :pending
-        flow_object.notes = "Initial submission"
+        obj = FlowClassSampler.new(status: :pending, notes: "Initial submission")
 
         # Reject
-        flow_object.status_reject
-        assert_equal :rejected, flow_object.status
-        assert_equal "Rejected: Initial submission", flow_object.notes
+        obj.status_reject
+        assert_equal :rejected, obj.status
+        assert_equal "Rejected: Initial submission", obj.notes
 
         # Resubmit
-        flow_object.status_resubmit
-        assert_equal :pending, flow_object.status
-        assert_equal "Resubmitted: Rejected: Initial submission", flow_object.notes
+        obj.status_resubmit
+        assert_equal :pending, obj.status
+        assert_equal "Resubmitted: Rejected: Initial submission", obj.notes
       end
 
       it "handles request changes workflow" do
-        flow_object.status = :approved
-        flow_object.notes = "Original notes"
+        obj = FlowClassSampler.new(status: :approved, notes: "Original notes")
 
         # Request changes
-        flow_object.status_request_changes
-        assert_equal :pending, flow_object.status
-        assert_equal "Changes requested: Original notes", flow_object.notes
+        obj.status_request_changes
+        assert_equal :pending, obj.status
+        assert_equal "Changes requested: Original notes", obj.notes
       end
 
       it "handles hold and approval workflow" do
-        flow_object.status = :pending
-        flow_object.user_role = "user"
-        flow_object.approval_count = 0
+        obj = FlowClassSampler.new(status: :pending, approval_count: 0)
+        obj.user_role = "user"
 
         # Put on hold
-        flow_object.status_hold
-        assert_equal :on_hold, flow_object.status
+        obj.status_hold
+        assert_equal :on_hold, obj.status
 
         # Try to approve as user (should fail)
-        flow_object.status_approve
-        assert_equal :on_hold, flow_object.status
-        assert_equal 0, flow_object.approval_count
+        obj.status_approve
+        assert_equal :on_hold, obj.status
+        assert_equal 0, obj.approval_count
 
         # Approve as admin
-        flow_object.user_role = "admin"
-        flow_object.status_approve
-        assert_equal :approved, flow_object.status
-        assert_equal 1, flow_object.approval_count
+        obj.user_role = "admin"
+        obj.status_approve
+        assert_equal :approved, obj.status
+        assert_equal 1, obj.approval_count
       end
     end
 
     describe "flow method with arguments" do
       it "passes arguments to transition blocks" do
-        flow_class_with_args = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :args_received
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved do |*args, **kwargs|
-                @args_received = {args: args, kwargs: kwargs}
-              end
-            end
-          end
-        end
-
-        instance_with_args = flow_class_with_args.new
-        instance_with_args.status = :pending
+        instance_with_args = FlowWithArgsSampler.new(status: :pending)
 
         instance_with_args.flow(:approve, :status, "arg1", "arg2", key: "value")
         assert_equal({
@@ -419,59 +930,31 @@ class CirculatorFlowTest < Minitest::Test
 
     describe "error handling" do
       it "raises error for invalid action" do
-        flow_object.status = :pending
+        obj = FlowClassSampler.new(status: :pending)
         assert_raises(RuntimeError) do
-          flow_object.flow(:invalid_action, :status)
+          obj.flow(:invalid_action, :status)
         end
       end
 
       it "raises error with no starting state" do
-        flow_object.status = nil
+        obj = FlowClassSampler.new
         assert_raises(RuntimeError) do
-          flow_object.status_approve
+          obj.status_approve
         end
-        assert_nil flow_object.status
+        assert_nil obj.status
       end
 
       it "handles string status values" do
-        flow_object.status = "pending"
-        flow_object.user_role = "admin"
-        flow_object.status_approve
-        assert_equal :approved, flow_object.status
+        obj = FlowClassSampler.new(status: "pending")
+        obj.user_role = "admin"
+        obj.status_approve
+        assert_equal :approved, obj.status
       end
     end
 
     describe "multiple flows on same object" do
-      let(:multi_flow_class) do
-        Class.new do
-          extend Circulator
-
-          attr_accessor :status, :priority, :counter
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved do
-                @counter += 1
-              end
-            end
-          end
-
-          circulator :priority do
-            state :low do
-              action :escalate, to: :high do
-                @counter += 10
-              end
-            end
-          end
-        end
-      end
-
-      let(:multi_instance) { multi_flow_class.new }
-
       it "manages multiple flows independently" do
-        multi_instance.status = :pending
-        multi_instance.priority = :low
-        multi_instance.counter = 0
+        multi_instance = MultiFlowSampler.new(status: :pending, priority: :low, counter: 0)
 
         # Transition status
         multi_instance.status_approve
@@ -487,72 +970,58 @@ class CirculatorFlowTest < Minitest::Test
 
     describe "flow method generation" do
       it "creates methods for all defined actions" do
-        assert_includes flow_object.methods, :status_approve
-        assert_includes flow_object.methods, :status_reject
-        assert_includes flow_object.methods, :status_hold
-        assert_includes flow_object.methods, :status_publish
-        assert_includes flow_object.methods, :status_request_changes
-        assert_includes flow_object.methods, :status_resubmit
-        assert_includes flow_object.methods, :status_archive
-        assert_includes flow_object.methods, :status_restore
+        obj = FlowClassSampler.new
+        assert_includes obj.methods, :status_approve
+        assert_includes obj.methods, :status_reject
+        assert_includes obj.methods, :status_hold
+        assert_includes obj.methods, :status_publish
+        assert_includes obj.methods, :status_request_changes
+        assert_includes obj.methods, :status_resubmit
+        assert_includes obj.methods, :status_archive
+        assert_includes obj.methods, :status_restore
       end
 
       it "allows for method overrides" do
-        flow_object.status = :published
-        flow_object.status_archive
-        assert_equal "override_archive", flow_object.status
+        obj = FlowClassSampler.new(status: :published)
+        obj.status_archive
+        assert_equal "override_archive", obj.status
       end
     end
 
     describe "state predicate methods" do
       it "creates predicate methods for all defined states" do
-        assert_includes flow_object.methods, :status_pending?
-        assert_includes flow_object.methods, :status_approved?
-        assert_includes flow_object.methods, :status_rejected?
-        assert_includes flow_object.methods, :status_published?
-        assert_includes flow_object.methods, :status_archived?
-        assert_includes flow_object.methods, :status_on_hold?
-        assert_includes flow_object.methods, :status_override_archive?
+        obj = FlowClassSampler.new
+        assert_includes obj.methods, :status_pending?
+        assert_includes obj.methods, :status_approved?
+        assert_includes obj.methods, :status_rejected?
+        assert_includes obj.methods, :status_published?
+        assert_includes obj.methods, :status_archived?
+        assert_includes obj.methods, :status_on_hold?
+        assert_includes obj.methods, :status_override_archive?
       end
 
       it "returns true when state matches current value" do
-        flow_object.status = :pending
-        assert flow_object.status_pending?
-        refute flow_object.status_approved?
-        refute flow_object.status_rejected?
+        obj = FlowClassSampler.new(status: :pending)
+        assert obj.status_pending?
+        refute obj.status_approved?
+        refute obj.status_rejected?
       end
 
       it "returns false when state does not match current value" do
-        flow_object.status = :approved
-        refute flow_object.status_pending?
-        assert flow_object.status_approved?
-        refute flow_object.status_rejected?
+        obj = FlowClassSampler.new(status: :approved)
+        refute obj.status_pending?
+        assert obj.status_approved?
+        refute obj.status_rejected?
       end
 
       it "works with string values" do
-        flow_object.status = "pending"
-        assert flow_object.status_pending?
-        refute flow_object.status_approved?
+        obj = FlowClassSampler.new(status: "pending")
+        assert obj.status_pending?
+        refute obj.status_approved?
       end
 
       it "does not create predicate method for nil state" do
-        nil_state_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          circulator :status do
-            state nil do
-              action :initialize, to: :pending
-            end
-            state :pending do
-              action :clear, to: nil
-            end
-          end
-        end
-
-        nil_state_object = nil_state_class.new
-        nil_state_object.status = nil
+        nil_state_object = NilStateSampler.new
 
         # Should not create a method for nil state
         refute_includes nil_state_object.methods, :status_?
@@ -562,246 +1031,110 @@ class CirculatorFlowTest < Minitest::Test
       end
 
       it "skips creating predicate method if it already exists" do
-        skip_method_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          # First flow defines state
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-            end
-          end
-
-          # Second flow with same attribute and same state
-          # Should skip creating status_pending? since it already exists
-          circulator :status do
-            state :pending do
-              action :complete, to: :done
-            end
-            state :approved do
-              action :finalize, to: :finalized
-            end
-          end
-        end
-
-        skip_method_object = skip_method_class.new
-        skip_method_object.status = :pending
+        skip_method_object = SkipMethodSampler.new(status: :pending)
 
         # Should use the predicate method (doesn't matter which flow created it)
         assert skip_method_object.status_pending?
 
         # Should also have predicate for approved state
-        skip_method_object.status = :approved
+        skip_method_object = SkipMethodSampler.new(status: :approved)
         assert skip_method_object.status_approved?
       end
     end
 
     describe "no_action behavior" do
-      let(:no_action_flow_class) do
-        Class.new do
-          extend Circulator
-
-          attr_accessor :status, :no_action_called, :no_action_args
-
-          def initialize
-            @no_action_called = false
-            @no_action_args = nil
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-              # Define reject action but only for approved state to test no_action
-              action :reject, to: :rejected, from: :approved
-            end
-
-            # Custom no_action block that logs the call
-            no_action do |attribute_name, action|
-              @no_action_called = true
-              @no_action_args = {attribute_name: attribute_name, action: action}
-              # Don't raise, just log
-            end
-          end
-        end
-      end
-
-      let(:no_action_flow_object) { no_action_flow_class.new }
-
       it "calls custom no_action block when no transition exists" do
-        no_action_flow_object.status = :pending
+        obj = NoActionFlowSampler.new(status: :pending)
 
         # Try an action that doesn't exist for pending state
-        no_action_flow_object.status_reject
+        obj.status_reject
 
-        assert no_action_flow_object.no_action_called
+        assert obj.no_action_called
         assert_equal({
           attribute_name: :status,
           action: :reject
-        }, no_action_flow_object.no_action_args)
+        }, obj.no_action_args)
         # Status should remain unchanged
-        assert_equal :pending, no_action_flow_object.status
+        assert_equal :pending, obj.status
       end
 
       it "calls custom no_action block when state is nil" do
-        no_action_flow_object.status = nil
+        obj = NoActionFlowSampler.new
 
-        no_action_flow_object.status_approve
+        obj.status_approve
 
-        assert no_action_flow_object.no_action_called
+        assert obj.no_action_called
         assert_equal({
           attribute_name: :status,
           action: :approve
-        }, no_action_flow_object.no_action_args)
-        assert_nil no_action_flow_object.status
+        }, obj.no_action_args)
+        assert_nil obj.status
       end
 
       it "calls custom no_action block when state is unknown" do
-        no_action_flow_object.status = :unknown_state
+        obj = NoActionFlowSampler.new(status: :unknown_state)
 
-        no_action_flow_object.status_approve
+        obj.status_approve
 
-        assert no_action_flow_object.no_action_called
+        assert obj.no_action_called
         assert_equal({
           attribute_name: :status,
           action: :approve
-        }, no_action_flow_object.no_action_args)
-        assert_equal :unknown_state, no_action_flow_object.status
+        }, obj.no_action_args)
+        assert_equal :unknown_state, obj.status
       end
 
       it "does not call no_action block when transition exists" do
-        no_action_flow_object.status = :pending
+        obj = NoActionFlowSampler.new(status: :pending)
 
-        no_action_flow_object.status_approve
+        obj.status_approve
 
-        refute no_action_flow_object.no_action_called
-        assert_equal :approved, no_action_flow_object.status
+        refute obj.no_action_called
+        assert_equal :approved, obj.status
       end
 
       it "allows no_action block to raise custom errors" do
-        custom_error_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-              action :reject, to: :rejected, from: :approved
-            end
-
-            no_action do |attribute_name, action|
-              raise "Custom error: Cannot perform #{action} on #{attribute_name}"
-            end
-          end
-        end
-
-        custom_error_object = custom_error_class.new
-        custom_error_object.status = :pending
+        obj = NoActionBehaviorSampler.new(error_status: :pending)
 
         error = assert_raises(RuntimeError) do
-          custom_error_object.status_reject
+          obj.error_status_reject
         end
-        assert_equal "Custom error: Cannot perform reject on status", error.message
-        assert_equal :pending, custom_error_object.status
+        assert_equal "Custom error: Cannot perform reject on error_status", error.message
+        assert_equal :pending, obj.error_status
       end
 
       it "allows no_action block to perform side effects" do
-        side_effect_class = Class.new do
-          extend Circulator
+        obj = NoActionBehaviorSampler.new(side_effect_status: :pending)
 
-          attr_accessor :status, :side_effect_count, :last_action_attempted
+        obj.side_effect_status_reject
+        assert_equal 1, obj.side_effect_count
+        assert_equal :reject, obj.last_action_attempted
 
-          def initialize
-            @side_effect_count = 0
-            @last_action_attempted = nil
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-              action :reject, to: :rejected, from: :approved
-              action :publish, to: :published, from: :approved
-            end
-
-            no_action do |attribute_name, action|
-              @side_effect_count += 1
-              @last_action_attempted = action
-              # Could log, notify, etc.
-            end
-          end
-        end
-
-        side_effect_object = side_effect_class.new
-        side_effect_object.status = :pending
-
-        side_effect_object.status_reject
-        assert_equal 1, side_effect_object.side_effect_count
-        assert_equal :reject, side_effect_object.last_action_attempted
-
-        side_effect_object.status_publish
-        assert_equal 2, side_effect_object.side_effect_count
-        assert_equal :publish, side_effect_object.last_action_attempted
+        obj.side_effect_status_publish
+        assert_equal 2, obj.side_effect_count
+        assert_equal :publish, obj.last_action_attempted
       end
 
       it "handles string status values in no_action blocks" do
-        string_status_class = Class.new do
-          extend Circulator
+        obj = NoActionBehaviorSampler.new(track_status: "pending")
 
-          attr_accessor :status, :no_action_called
+        obj.track_status_reject
 
-          def initialize
-            @no_action_called = false
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-              action :reject, to: :rejected, from: :approved
-            end
-
-            no_action do |attribute_name, action|
-              @no_action_called = true
-            end
-          end
-        end
-
-        string_status_object = string_status_class.new
-        string_status_object.status = "pending"
-
-        string_status_object.status_reject
-
-        assert string_status_object.no_action_called
-        assert_equal "pending", string_status_object.status
+        assert obj.no_action_called
+        assert_equal "pending", obj.track_status
       end
 
       it "defaults to raising error when no no_action block is specified" do
-        default_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-              action :reject, to: :rejected, from: :approved
-            end
-            # No no_action block specified
-          end
-        end
-
-        default_object = default_class.new
-        default_object.status = :pending
+        obj = NoActionBehaviorSampler.new(default_status: :pending)
 
         assert_raises(RuntimeError) do
-          default_object.status_reject
+          obj.default_status_reject
         end
       end
 
       it "allows no_action block to be set and retrieved" do
         # Create a flow instance directly
-        flow_instance = Circulator::Flow.new(flow_class, :status) {}
+        flow_instance = Circulator::Flow.new(FlowClassSampler, :status) {}
 
         # Set custom no_action block
         custom_block = ->(attr, action) { "custom behavior" }
@@ -814,246 +1147,111 @@ class CirculatorFlowTest < Minitest::Test
       end
 
       it "handles multiple no_action calls correctly" do
-        multiple_calls_class = Class.new do
-          extend Circulator
+        obj = NoActionBehaviorSampler.new(multi_status: :pending)
 
-          attr_accessor :status, :call_count
-
-          def initialize
-            @call_count = 0
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-              action :reject, to: :rejected, from: :approved
-            end
-
-            # First no_action block
-            no_action do |attribute_name, action|
-              @call_count += 1
-            end
-
-            # Second no_action block (should override the first)
-            no_action do |attribute_name, action|
-              @call_count += 10
-            end
-          end
-        end
-
-        multiple_calls_object = multiple_calls_class.new
-        multiple_calls_object.status = :pending
-
-        multiple_calls_object.status_reject
+        obj.multi_status_reject
 
         # Should only call the last no_action block
-        assert_equal 10, multiple_calls_object.call_count
+        assert_equal 10, obj.call_count
       end
     end
 
     describe "callable to: behavior" do
-      let(:callable_to_class) do
-        Class.new do
-          extend Circulator
-
-          attr_accessor :status, :counter, :transition_args, :transition_kwargs
-
-          def initialize
-            @counter = 0
-            @transition_args = nil
-            @transition_kwargs = nil
-          end
-
-          circulator :status do
-            state :pending do
-              # Simple callable that returns a static value
-              action :approve, to: -> { :approved }
-
-              # Callable that uses instance variables
-              action :increment, to: -> {
-                @counter += 1
-                :incremented
-              }
-
-              # Callable that receives arguments
-              action :custom, to: ->(*args, **kwargs) do
-                @transition_args = args
-                @transition_kwargs = kwargs
-                :custom_state
-              end
-            end
-
-            state :approved do
-              # Callable that returns different states based on conditions
-              action :process, to: ->(priority) do
-                case priority
-                when "high"
-                  :urgent
-                when "low"
-                  :normal
-                else
-                  :pending
-                end
-              end
-            end
-
-            state :urgent do
-              # Callable that uses multiple arguments
-              action :resolve, to: ->(resolver, reason = "default") do
-                @resolver = resolver
-                @reason = reason
-                :resolved
-              end
-            end
-
-            # Actions with from: option and callable to:
-            action :reset, to: -> { :pending }, from: [:approved, :urgent, :normal, :resolved]
-            action :escalate, to: ->(level) { :"level_#{level}" }, from: [:normal, :pending]
-          end
-        end
-      end
-
-      let(:callable_to_object) { callable_to_class.new }
-
       it "uses callable to: for simple state transitions" do
-        callable_to_object.status = :pending
+        obj = CallableToSampler.new(status: :pending)
 
-        callable_to_object.status_approve
+        obj.status_approve
 
-        assert_equal :approved, callable_to_object.status
+        assert_equal :approved, obj.status
       end
 
       it "executes callable to: with side effects" do
-        callable_to_object.status = :pending
-        callable_to_object.counter = 0
+        obj = CallableToSampler.new(status: :pending, counter: 0)
 
-        callable_to_object.status_increment
+        obj.status_increment
 
-        assert_equal :incremented, callable_to_object.status
-        assert_equal 1, callable_to_object.counter
+        assert_equal :incremented, obj.status
+        assert_equal 1, obj.counter
       end
 
       it "passes arguments to callable to:" do
-        callable_to_object.status = :pending
+        obj = CallableToSampler.new(status: :pending)
 
-        callable_to_object.status_custom("arg1", "arg2", key1: "value1", key2: "value2")
+        obj.status_custom("arg1", "arg2", key1: "value1", key2: "value2")
 
-        assert_equal :custom_state, callable_to_object.status
-        assert_equal ["arg1", "arg2"], callable_to_object.transition_args
-        assert_equal({key1: "value1", key2: "value2"}, callable_to_object.transition_kwargs)
+        assert_equal :custom_state, obj.status
+        assert_equal ["arg1", "arg2"], obj.transition_args
+        assert_equal({key1: "value1", key2: "value2"}, obj.transition_kwargs)
       end
 
       it "uses callable to: for conditional state transitions" do
-        callable_to_object.status = :approved
+        obj = CallableToSampler.new(status: :approved)
 
         # High priority
-        callable_to_object.status_process("high")
-        assert_equal :urgent, callable_to_object.status
+        obj.status_process("high")
+        assert_equal :urgent, obj.status
 
         # Low priority
-        callable_to_object.status = :approved
-        callable_to_object.status_process("low")
-        assert_equal :normal, callable_to_object.status
+        obj = CallableToSampler.new(status: :approved)
+        obj.status_process("low")
+        assert_equal :normal, obj.status
 
         # Unknown priority
-        callable_to_object.status = :approved
-        callable_to_object.status_process("unknown")
-        assert_equal :pending, callable_to_object.status
+        obj = CallableToSampler.new(status: :approved)
+        obj.status_process("unknown")
+        assert_equal :pending, obj.status
       end
 
       it "handles callable to: with default arguments" do
-        callable_to_object.status = :urgent
+        obj = CallableToSampler.new(status: :urgent)
 
         # With arguments
-        callable_to_object.status_resolve("admin", "bug fix")
-        assert_equal :resolved, callable_to_object.status
-        assert_equal "admin", callable_to_object.instance_variable_get(:@resolver)
-        assert_equal "bug fix", callable_to_object.instance_variable_get(:@reason)
+        obj.status_resolve("admin", "bug fix")
+        assert_equal :resolved, obj.status
+        assert_equal "admin", obj.instance_variable_get(:@resolver)
+        assert_equal "bug fix", obj.instance_variable_get(:@reason)
 
         # With default argument
-        callable_to_object.status = :urgent
-        callable_to_object.status_resolve("user")
-        assert_equal :resolved, callable_to_object.status
-        assert_equal "user", callable_to_object.instance_variable_get(:@resolver)
-        assert_equal "default", callable_to_object.instance_variable_get(:@reason)
+        obj = CallableToSampler.new(status: :urgent)
+        obj.status_resolve("user")
+        assert_equal :resolved, obj.status
+        assert_equal "user", obj.instance_variable_get(:@resolver)
+        assert_equal "default", obj.instance_variable_get(:@reason)
       end
 
       it "works with from: option and callable to:" do
         # Test reset from different states
         [:approved, :urgent, :normal, :resolved].each do |state|
-          callable_to_object.status = state
-          callable_to_object.status_reset
-          assert_equal :pending, callable_to_object.status
+          obj = CallableToSampler.new(status: state)
+          obj.status_reset
+          assert_equal :pending, obj.status
         end
       end
 
       it "handles callable to: with from: option and arguments" do
         # From normal state
-        callable_to_object.status = :normal
-        callable_to_object.status_escalate(3)
-        assert_equal :level_3, callable_to_object.status
+        obj = CallableToSampler.new(status: :normal)
+        obj.status_escalate(3)
+        assert_equal :level_3, obj.status
 
         # From pending state
-        callable_to_object.status = :pending
-        callable_to_object.status_escalate(1)
-        assert_equal :level_1, callable_to_object.status
+        obj = CallableToSampler.new(status: :pending)
+        obj.status_escalate(1)
+        assert_equal :level_1, obj.status
       end
 
       it "executes transition blocks before callable to:" do
-        transition_block_class = Class.new do
-          extend Circulator
+        transition_block_object = CallableToBlockInteractionSampler.new(exec_status: :pending)
 
-          attr_accessor :status, :block_executed, :final_state
-
-          def initialize
-            @block_executed = false
-            @final_state = nil
-          end
-
-          circulator :status do
-            state :pending do
-              action :process, to: -> {
-                @final_state = :processed
-                :approved
-              } do
-                @block_executed = true
-              end
-            end
-          end
-        end
-
-        transition_block_object = transition_block_class.new
-        transition_block_object.status = :pending
-
-        transition_block_object.status_process
+        transition_block_object.exec_status_process
 
         assert transition_block_object.block_executed
-        assert_equal :approved, transition_block_object.status
+        assert_equal :approved, transition_block_object.exec_status
         assert_equal :processed, transition_block_object.final_state
       end
 
       it "respects allow_if conditions with callable to:" do
-        conditional_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :user_role, :transition_count
-
-          def initialize
-            @transition_count = 0
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: -> {
-                @transition_count += 1
-                :approved
-              }, allow_if: -> { @user_role == "admin" }
-            end
-          end
-        end
-
-        conditional_object = conditional_class.new
-        conditional_object.status = :pending
+        conditional_object = CallableToConditionalSampler.new(status: :pending)
 
         # Should not transition when condition is false
         conditional_object.user_role = "user"
@@ -1069,31 +1267,7 @@ class CirculatorFlowTest < Minitest::Test
       end
 
       it "handles complex callable to: with multiple operations" do
-        complex_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :log, :timestamp
-
-          def initialize
-            @log = []
-            @timestamp = nil
-          end
-
-          circulator :status do
-            state :pending do
-              action :complete, to: ->(user, note = nil) do
-                @timestamp = Time.now
-                @log << "Completed by #{user}"
-                @log << "Note: #{note}" if note
-                @log << "Timestamp: #{@timestamp}"
-                :completed
-              end
-            end
-          end
-        end
-
-        complex_object = complex_class.new
-        complex_object.status = :pending
+        complex_object = CallableToComplexSampler.new(status: :pending)
 
         complex_object.status_complete("admin", "All tests passing")
 
@@ -1104,299 +1278,138 @@ class CirculatorFlowTest < Minitest::Test
       end
 
       it "handles callable to: that returns nil or invalid states" do
-        nil_return_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :process, to: -> {}
-              action :invalid, to: -> { "invalid_state" }
-            end
-          end
-        end
-
-        nil_return_object = nil_return_class.new
-        nil_return_object.status = :pending
+        nil_return_object = CallableToEdgeCasesSampler.new(nil_return: :pending)
 
         # Should handle nil return
-        nil_return_object.status_process
-        assert_nil nil_return_object.status
+        nil_return_object.nil_return_process
+        assert_nil nil_return_object.nil_return
 
         # Should handle string return
-        nil_return_object.status = :pending
-        nil_return_object.status_invalid
-        assert_equal "invalid_state", nil_return_object.status
+        nil_return_object = CallableToEdgeCasesSampler.new(nil_return: :pending)
+        nil_return_object.nil_return_invalid
+        assert_equal "invalid_state", nil_return_object.nil_return
       end
 
       it "works with string status values and callable to:" do
-        string_status_class = Class.new do
-          extend Circulator
+        string_status_object = CallableToEdgeCasesSampler.new(string_return: "pending")
 
-          attr_accessor :status
+        string_status_object.string_return_approve
 
-          circulator :status do
-            state :pending do
-              action :approve, to: -> { "approved" }
-            end
-          end
-        end
-
-        string_status_object = string_status_class.new
-        string_status_object.status = "pending"
-
-        string_status_object.status_approve
-
-        assert_equal "approved", string_status_object.status
+        assert_equal "approved", string_status_object.string_return
       end
     end
 
     describe "nil to: and from: behavior" do
-      let(:nil_behavior_class) do
-        Class.new do
-          extend Circulator
-
-          attr_accessor :status, :transition_log
-
-          def initialize
-            @transition_log = []
-          end
-
-          circulator :status do
-            state :pending do
-              action :clear, to: nil do
-                @transition_log << "cleared"
-              end
-              action :approve, to: :approved
-            end
-
-            state :approved do
-              action :reset, to: nil do
-                @transition_log << "reset"
-              end
-            end
-
-            action :initialize, to: :pending, from: nil do
-              @transition_log << "initialized"
-            end
-
-            action :restart, to: :pending, from: [:approved, :rejected, nil] do
-              @transition_log << "restarted"
-            end
-          end
-        end
-      end
-
-      let(:nil_behavior_object) { nil_behavior_class.new }
-
       it "handles nil transitions" do
         # Transition to nil
-        nil_behavior_object.status = :pending
-        nil_behavior_object.status_clear
-        assert_nil nil_behavior_object.status
-        assert_equal ["cleared"], nil_behavior_object.transition_log
+        obj = NilBehaviorSampler.new(status: :pending)
+        obj.status_clear
+        assert_nil obj.status
+        assert_equal ["cleared"], obj.transition_log
 
         # Transition from nil
-        nil_behavior_object.status_initialize
-        assert_equal :pending, nil_behavior_object.status
-        assert_equal ["cleared", "initialized"], nil_behavior_object.transition_log
+        obj.status_initialize
+        assert_equal :pending, obj.status
+        assert_equal ["cleared", "initialized"], obj.transition_log
 
-        # Transition to nil from different state
-        nil_behavior_object.status = :approved
-        nil_behavior_object.status_reset
-        assert_nil nil_behavior_object.status
-        assert_equal ["cleared", "initialized", "reset"], nil_behavior_object.transition_log
+        # Transition to :approved then reset to nil
+        obj.status_approve
+        assert_equal :approved, obj.status
+        obj.status_reset
+        assert_nil obj.status
+        assert_equal ["cleared", "initialized", "reset"], obj.transition_log
 
         # Transition from multiple states including nil
-        nil_behavior_object.status_restart
-        assert_equal :pending, nil_behavior_object.status
-        assert_equal ["cleared", "initialized", "reset", "restarted"], nil_behavior_object.transition_log
+        obj.status_restart
+        assert_equal :pending, obj.status
+        assert_equal ["cleared", "initialized", "reset", "restarted"], obj.transition_log
       end
 
       it "works with callable to: that returns nil" do
-        callable_nil_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :should_clear
-
-          circulator :status do
-            state :pending do
-              action :conditional_clear, to: -> { @should_clear ? nil : :approved }
-            end
-          end
-        end
-
-        callable_nil_object = callable_nil_class.new
-        callable_nil_object.status = :pending
+        callable_nil_object = CallableToEdgeCasesSampler.new(conditional_return: :pending)
 
         # When should_clear is true
         callable_nil_object.should_clear = true
-        callable_nil_object.status_conditional_clear
-        assert_nil callable_nil_object.status
+        callable_nil_object.conditional_return_conditional_clear
+        assert_nil callable_nil_object.conditional_return
 
         # When should_clear is false
-        callable_nil_object.status = :pending
+        callable_nil_object = CallableToEdgeCasesSampler.new(conditional_return: :pending)
         callable_nil_object.should_clear = false
-        callable_nil_object.status_conditional_clear
-        assert_equal :approved, callable_nil_object.status
+        callable_nil_object.conditional_return_conditional_clear
+        assert_equal :approved, callable_nil_object.conditional_return
       end
 
       it "handles nil with allow_if conditions" do
-        conditional_nil_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :user_role, :transition_count
-
-          def initialize
-            @transition_count = 0
-          end
-
-          circulator :status do
-            state :pending do
-              action :clear, to: nil, allow_if: -> { @user_role == "admin" } do
-                @transition_count += 1
-              end
-            end
-
-            action :initialize, to: :pending, from: nil, allow_if: -> { @user_role == "admin" } do
-              @transition_count += 1
-            end
-          end
-        end
-
-        conditional_nil_object = conditional_nil_class.new
+        obj = NilTransitionsSampler.new(conditional_status: :pending)
 
         # Test to: nil with condition
-        conditional_nil_object.status = :pending
-        conditional_nil_object.user_role = "user"
-        conditional_nil_object.status_clear
-        assert_equal :pending, conditional_nil_object.status
-        assert_equal 0, conditional_nil_object.transition_count
+        obj.user_role = "user"
+        obj.conditional_status_clear
+        assert_equal :pending, obj.conditional_status
+        assert_equal 0, obj.transition_count
 
-        conditional_nil_object.user_role = "admin"
-        conditional_nil_object.status_clear
-        assert_nil conditional_nil_object.status
-        assert_equal 1, conditional_nil_object.transition_count
+        obj.user_role = "admin"
+        obj.conditional_status_clear
+        assert_nil obj.conditional_status
+        assert_equal 1, obj.transition_count
 
         # Test from: nil with condition
-        conditional_nil_object.user_role = "user"
-        conditional_nil_object.status_initialize
-        assert_nil conditional_nil_object.status
-        assert_equal 1, conditional_nil_object.transition_count
+        obj.user_role = "user"
+        obj.conditional_status_initialize
+        assert_nil obj.conditional_status
+        assert_equal 1, obj.transition_count
 
-        conditional_nil_object.user_role = "admin"
-        conditional_nil_object.status_initialize
-        assert_equal :pending, conditional_nil_object.status
-        assert_equal 2, conditional_nil_object.transition_count
+        obj.user_role = "admin"
+        obj.conditional_status_initialize
+        assert_equal :pending, obj.conditional_status
+        assert_equal 2, obj.transition_count
       end
 
       it "works with blocks and nil transitions" do
-        block_nil_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :execution_order
-
-          def initialize
-            @execution_order = []
-          end
-
-          circulator :status do
-            state :pending do
-              action :clear, to: nil do
-                @execution_order << "transition_block"
-              end
-            end
-
-            action :initialize, to: :pending, from: nil do
-              @execution_order << "transition_block"
-            end
-          end
-        end
-
-        block_nil_object = block_nil_class.new
+        obj = NilTransitionsSampler.new(block_status: :pending)
 
         # Test to: nil with block
-        block_nil_object.status = :pending
-        block_nil_object.status_clear do
+        obj.block_status_clear do
           @execution_order << "method_block"
         end
-        assert_nil block_nil_object.status
-        assert_equal ["transition_block", "method_block"], block_nil_object.execution_order
+        assert_nil obj.block_status
+        assert_equal ["transition_block", "method_block"], obj.execution_order
 
         # Test from: nil with block
-        block_nil_object.execution_order = []
-        block_nil_object.status_initialize do
+        obj.execution_order = []
+        obj.block_status_initialize do
           @execution_order << "method_block"
         end
-        assert_equal :pending, block_nil_object.status
-        assert_equal ["transition_block", "method_block"], block_nil_object.execution_order
+        assert_equal :pending, obj.block_status
+        assert_equal ["transition_block", "method_block"], obj.execution_order
       end
 
       it "handles string status values with nil transitions" do
-        string_nil_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :clear, to: nil
-            end
-
-            action :initialize, to: :pending, from: nil
-          end
-        end
-
-        string_nil_object = string_nil_class.new
+        obj = NilTransitionsSampler.new(string_status: "pending")
 
         # Test to: nil with symbol status (converted from string)
-        string_nil_object.status = "pending"
-        string_nil_object.status_clear
-        assert_nil string_nil_object.status
+        obj.string_status_clear
+        assert_nil obj.string_status
 
         # Test from: nil to symbol status
-        string_nil_object.status_initialize
-        assert_equal :pending, string_nil_object.status
+        obj.string_status_initialize
+        assert_equal :pending, obj.string_status
       end
 
       it "works with no_action when transitioning to/from nil" do
-        no_action_nil_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :no_action_called
-
-          def initialize
-            @no_action_called = false
-          end
-
-          circulator :status do
-            state :pending do
-              action :clear, to: nil
-              action :approve, to: :approved
-            end
-
-            action :clear, to: nil, from: nil
-
-            no_action do |attribute_name, action|
-              @no_action_called = true
-            end
-          end
-        end
-
-        no_action_nil_object = no_action_nil_class.new
+        obj = NilTransitionsSampler.new
 
         # Test that no_action is called for invalid actions when status is nil
-        no_action_nil_object.status = nil
-        no_action_nil_object.status_approve
-        assert no_action_nil_object.no_action_called
-        assert_nil no_action_nil_object.status
+        obj.no_action_status_approve
+        assert obj.no_action_called
+        assert_nil obj.no_action_status
 
         # Test that no_action is NOT called for valid actions when status is nil
-        no_action_nil_object.no_action_called = false
-        no_action_nil_object.status_clear
-        refute no_action_nil_object.no_action_called
-        assert_nil no_action_nil_object.status
+        obj.no_action_called = false
+        obj.no_action_status_clear
+        refute obj.no_action_called
+        assert_nil obj.no_action_status
       end
 
       it "uses action_allowed with nil as from state" do
@@ -1432,308 +1445,146 @@ class CirculatorFlowTest < Minitest::Test
     end
 
     describe "block passing behavior" do
-      let(:block_flow_class) do
-        Class.new do
-          extend Circulator
-
-          attr_accessor :status, :block_executed, :block_args, :block_kwargs, :execution_order
-
-          def initialize
-            @block_executed = false
-            @block_args = nil
-            @block_kwargs = nil
-            @execution_order = []
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved do
-                @execution_order << "transition_block"
-              end
-              action :reject, to: :rejected
-              action :process, to: :processing do
-                @execution_order << "transition_block"
-              end
-            end
-
-            state :approved do
-              action :publish, to: :published do
-                @execution_order << "transition_block"
-              end
-            end
-          end
-        end
-      end
-
-      let(:block_flow_object) { block_flow_class.new }
-
       it "executes blocks passed to dynamically defined methods" do
-        block_flow_object.status = :pending
+        obj = BlockFlowSampler.new(status: :pending)
         block_executed = false
 
-        block_flow_object.status_approve do
+        obj.status_approve do
           block_executed = true
           @execution_order << "method_block"
         end
 
         assert block_executed
-        assert_equal :approved, block_flow_object.status
-        assert_equal ["transition_block", "method_block"], block_flow_object.execution_order
+        assert_equal :approved, obj.status
+        assert_equal ["transition_block", "method_block"], obj.execution_order
       end
 
       it "passes arguments to blocks passed to methods" do
-        block_flow_object.status = :pending
+        obj = BlockFlowSampler.new(status: :pending)
 
-        block_flow_object.status_approve("arg1", "arg2", key1: "value1") do |*args, **kwargs|
+        obj.status_approve("arg1", "arg2", key1: "value1") do |*args, **kwargs|
           @block_args = args
           @block_kwargs = kwargs
           @execution_order << "method_block"
         end
 
-        assert_equal ["arg1", "arg2"], block_flow_object.block_args
-        assert_equal({key1: "value1"}, block_flow_object.block_kwargs)
-        assert_equal :approved, block_flow_object.status
+        assert_equal ["arg1", "arg2"], obj.block_args
+        assert_equal({key1: "value1"}, obj.block_kwargs)
+        assert_equal :approved, obj.status
       end
 
       it "executes blocks passed to flow method" do
-        block_flow_object.status = :pending
+        obj = BlockFlowSampler.new(status: :pending)
         block_executed = false
 
-        block_flow_object.flow(:approve, :status) do
+        obj.flow(:approve, :status) do
           block_executed = true
           @execution_order << "flow_block"
         end
 
         assert block_executed
-        assert_equal :approved, block_flow_object.status
-        assert_equal ["transition_block", "flow_block"], block_flow_object.execution_order
+        assert_equal :approved, obj.status
+        assert_equal ["transition_block", "flow_block"], obj.execution_order
       end
 
       it "passes arguments through flow method to blocks" do
-        block_flow_object.status = :pending
+        obj = BlockFlowSampler.new(status: :pending)
 
-        block_flow_object.flow(:approve, :status, "arg1", "arg2", key1: "value1") do |*args, **kwargs|
+        obj.flow(:approve, :status, "arg1", "arg2", key1: "value1") do |*args, **kwargs|
           @block_args = args
           @block_kwargs = kwargs
           @execution_order << "flow_block"
         end
 
-        assert_equal ["arg1", "arg2"], block_flow_object.block_args
-        assert_equal({key1: "value1"}, block_flow_object.block_kwargs)
-        assert_equal :approved, block_flow_object.status
+        assert_equal ["arg1", "arg2"], obj.block_args
+        assert_equal({key1: "value1"}, obj.block_kwargs)
+        assert_equal :approved, obj.status
       end
 
       it "executes blocks even when no transition block is defined" do
-        block_flow_object.status = :pending
+        obj = BlockFlowSampler.new(status: :pending)
         block_executed = false
 
-        block_flow_object.status_reject do
+        obj.status_reject do
           block_executed = true
           @execution_order << "method_block"
         end
 
         assert block_executed
-        assert_equal :rejected, block_flow_object.status
-        assert_equal ["method_block"], block_flow_object.execution_order
+        assert_equal :rejected, obj.status
+        assert_equal ["method_block"], obj.execution_order
       end
 
       it "executes blocks with callable to: transitions" do
-        callable_block_class = Class.new do
-          extend Circulator
+        callable_block_object = CallableToBlockInteractionSampler.new(order_status: :pending)
 
-          attr_accessor :status, :execution_order
-
-          def initialize
-            @execution_order = []
-          end
-
-          circulator :status do
-            state :pending do
-              action :process, to: -> {
-                @execution_order << "callable_to"
-                :processed
-              } do
-                @execution_order << "transition_block"
-              end
-            end
-          end
-        end
-
-        callable_block_object = callable_block_class.new
-        callable_block_object.status = :pending
-
-        callable_block_object.status_process do
+        callable_block_object.order_status_process do
           @execution_order << "method_block"
         end
 
-        assert_equal :processed, callable_block_object.status
+        assert_equal :processed, callable_block_object.order_status
         assert_equal ["transition_block", "callable_to", "method_block"], callable_block_object.execution_order
       end
 
       it "executes blocks when allow_if condition is true" do
-        conditional_block_class = Class.new do
-          extend Circulator
+        obj = Sampler.new(status: :rejected)
+        obj.user_role = "admin"
 
-          attr_accessor :status, :user_role, :block_executed
-
-          def initialize
-            @block_executed = false
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: -> { @user_role == "admin" } do
-                @execution_order ||= []
-                @execution_order << "transition_block"
-              end
-            end
-          end
-        end
-
-        conditional_block_object = conditional_block_class.new
-        conditional_block_object.status = :pending
-        conditional_block_object.user_role = "admin"
-
-        conditional_block_object.status_approve do
+        obj.status_reconsider do
           @block_executed = true
         end
 
-        assert conditional_block_object.block_executed
-        assert_equal :approved, conditional_block_object.status
+        assert obj.block_executed
+        assert_equal :pending, obj.status
       end
 
       it "does not execute blocks when allow_if condition is false" do
-        conditional_block_class = Class.new do
-          extend Circulator
+        obj = Sampler.new(status: :rejected)
+        obj.user_role = "user"
 
-          attr_accessor :status, :user_role, :block_executed
-
-          def initialize
-            @block_executed = false
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: -> { @user_role == "admin" }
-            end
-          end
-        end
-
-        conditional_block_object = conditional_block_class.new
-        conditional_block_object.status = :pending
-        conditional_block_object.user_role = "user"
-
-        conditional_block_object.status_approve do
+        obj.status_reconsider do
           @block_executed = true
         end
 
-        refute conditional_block_object.block_executed
-        assert_equal :pending, conditional_block_object.status
+        refute obj.block_executed
+        assert_equal :rejected, obj.status
       end
 
       it "does not execute blocks with no_action when no transition exists" do
-        no_action_block_class = Class.new do
-          extend Circulator
+        obj = Sampler.new(status: :pending)
 
-          attr_accessor :status, :block_executed
-
-          def initialize
-            @block_executed = false
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-              action :reject, to: :rejected, from: :approved
-            end
-
-            no_action do |attribute_name, action|
-              @no_action_called = true
-            end
-          end
-        end
-
-        no_action_block_object = no_action_block_class.new
-        no_action_block_object.status = :pending
-
-        no_action_block_object.status_reject do
+        obj.status_publish do
           @block_executed = true
         end
 
-        refute no_action_block_object.block_executed # block should NOT be called
-        assert_equal :pending, no_action_block_object.status
-        assert no_action_block_object.instance_variable_get(:@no_action_called)
+        refute obj.block_executed # block should NOT be called
+        assert_equal :pending, obj.status
+        assert_includes obj.transition_log, "No action: status.publish"
       end
 
       it "handles multiple blocks in complex scenarios" do
-        complex_block_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :execution_order, :counter
-
-          def initialize
-            @execution_order = []
-            @counter = 0
-          end
-
-          circulator :status do
-            state :pending do
-              action :process, to: -> {
-                @counter += 1
-                :processing
-              } do
-                @execution_order << "transition_block"
-              end
-            end
-
-            state :processing do
-              action :complete, to: :completed do
-                @execution_order << "transition_block"
-              end
-            end
-          end
-        end
-
-        complex_block_object = complex_block_class.new
-        complex_block_object.status = :pending
+        obj = BlockExecutionOrderSampler.new(multi_step: :pending)
 
         # First transition with block
-        complex_block_object.status_process do
+        obj.multi_step_process do
           @execution_order << "method_block_1"
         end
 
         # Second transition with block
-        complex_block_object.status_complete do
+        obj.multi_step_complete do
           @execution_order << "method_block_2"
         end
 
-        assert_equal :completed, complex_block_object.status
-        assert_equal 1, complex_block_object.counter
+        assert_equal :completed, obj.multi_step
+        assert_equal 1, obj.counter
         assert_equal [
           "transition_block", "method_block_1",
           "transition_block", "method_block_2"
-        ], complex_block_object.execution_order
+        ], obj.execution_order
       end
 
       it "works with string status values and blocks" do
-        string_block_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :block_executed
-
-          def initialize
-            @block_executed = false
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: "approved"
-            end
-          end
-        end
-
-        string_block_object = string_block_class.new
-        string_block_object.status = "pending"
+        string_block_object = StringBlockSampler.new(status: "pending")
 
         string_block_object.status_approve do
           @block_executed = true
@@ -1744,29 +1595,7 @@ class CirculatorFlowTest < Minitest::Test
       end
 
       it "handles blocks with from: option" do
-        from_block_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :block_executed
-
-          def initialize
-            @block_executed = false
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-            end
-
-            action :reset, to: :pending, from: [:approved, :rejected] do
-              @execution_order ||= []
-              @execution_order << "transition_block"
-            end
-          end
-        end
-
-        from_block_object = from_block_class.new
-        from_block_object.status = :approved
+        from_block_object = FromBlockSampler.new(status: :approved)
 
         from_block_object.status_reset do
           @block_executed = true
@@ -1777,38 +1606,16 @@ class CirculatorFlowTest < Minitest::Test
       end
 
       it "executes blocks in correct order with all flow features" do
-        order_flow_class = Class.new do
-          extend Circulator
+        obj = BlockExecutionOrderSampler.new(full_order: :pending)
 
-          attr_accessor :status, :execution_order
-
-          def initialize
-            @execution_order = []
-          end
-
-          circulator :status do
-            state :pending do
-              action :process, to: ->(*, **) {
-                @execution_order << "callable_to"
-                :processing
-              }, allow_if: ->(*args, **kwargs) { true } do |*args, **kwargs|
-                @execution_order << "transition_block"
-              end
-            end
-          end
-        end
-
-        order_flow_object = order_flow_class.new
-        order_flow_object.status = :pending
-
-        order_flow_object.status_process("arg1", key1: "value1") do |*args, **kwargs|
+        obj.full_order_process("arg1", key1: "value1") do |*args, **kwargs|
           @execution_order << "method_block"
         end
 
-        assert_equal :processing, order_flow_object.status
+        assert_equal :processing, obj.full_order
         assert_equal [
           "transition_block", "callable_to", "method_block"
-        ], order_flow_object.execution_order
+        ], obj.execution_order
       end
     end
   end
@@ -1903,30 +1710,7 @@ class CirculatorFlowTest < Minitest::Test
     end
 
     it "accepts hash with valid attribute and states" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status, :priority
-
-        circulator :priority do
-          state :low do
-            action :escalate, to: :high
-          end
-
-          state :high do
-            action :escalate, to: :critical
-          end
-        end
-
-        circulator :status do
-          state :pending do
-            action :approve, to: :approved, allow_if: {priority: [:high, :critical]}
-          end
-        end
-      end
-
-      # Should not raise an error
-      instance = klass.new
+      instance = HashAllowIfValidSampler.new
       assert_respond_to instance, :status_approve
     end
 
@@ -1961,615 +1745,203 @@ class CirculatorFlowTest < Minitest::Test
 
   describe "hash-based allow_if runtime evaluation" do
     it "allows transition when dependency state matches" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status, :priority
-
-        circulator :priority do
-          state :low do
-            action :escalate, to: :high
-          end
-
-          state :high do
-            action :escalate, to: :critical
-          end
-        end
-
-        circulator :status do
-          state :pending do
-            action :approve, to: :approved, allow_if: {priority: [:high, :critical]}
-          end
-        end
-      end
-
-      instance = klass.new
-      instance.status = :pending
-      instance.priority = :high
+      instance = HashAllowIfValidSampler.new(status: :pending, priority: :high)
 
       instance.status_approve
       assert_equal :approved, instance.status
     end
 
     it "blocks transition when dependency state doesn't match" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status, :priority
-
-        circulator :priority do
-          state :low do
-            action :escalate, to: :high
-          end
-
-          state :high do
-            action :escalate, to: :critical
-          end
-        end
-
-        circulator :status do
-          state :pending do
-            action :approve, to: :approved, allow_if: {priority: [:high, :critical]}
-          end
-        end
-      end
-
-      instance = klass.new
-      instance.status = :pending
-      instance.priority = :low
+      instance = HashAllowIfValidSampler.new(status: :pending, priority: :low)
 
       instance.status_approve
       assert_equal :pending, instance.status
     end
 
     it "handles string states in runtime evaluation" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status, :priority
-
-        circulator :priority do
-          state :low do
-            action :escalate, to: :high
-          end
-
-          state :high do
-          end
-        end
-
-        circulator :status do
-          state :pending do
-            action :approve, to: :approved, allow_if: {priority: [:high]}
-          end
-        end
-      end
-
-      instance = klass.new
-      instance.status = :pending
-      instance.priority = "high"  # String instead of symbol
+      instance = HashAllowIfValidSampler.new(status: :pending, priority: "high")
 
       instance.status_approve
       assert_equal :approved, instance.status
     end
 
     it "works with from: option and hash-based allow_if" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status, :priority
-
-        circulator :priority do
-          state :low do
-          end
-
-          state :high do
-          end
-        end
-
-        circulator :status do
-          action :approve, to: :approved, from: :pending, allow_if: {priority: [:high]}
-        end
-      end
-
-      instance = klass.new
-      instance.status = :pending
-      instance.priority = :high
+      instance = HashAllowIfFromSampler.new(status: :pending, priority: :high)
 
       instance.status_approve
       assert_equal :approved, instance.status
     end
 
     it "handles hash-based allow_if with non-symbol state values" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status, :priority
-
-        circulator :priority do
-          state :low do
-          end
-
-          state :high do
-          end
-        end
-
-        circulator :status do
-          state :pending do
-            action :approve, to: :approved, allow_if: {priority: [:high]}
-          end
-        end
-      end
-
-      instance = klass.new
-      instance.status = :pending
-
       # Test with integer priority (doesn't respond to :to_sym)
-      instance.priority = 1
+      instance = HashAllowIfValidSampler.new(status: :pending, priority: 1)
       instance.status_approve
       assert_equal :pending, instance.status
 
       # Test with string priority
-      instance.priority = "high"
+      instance = HashAllowIfValidSampler.new(status: :pending, priority: "high")
       instance.status_approve
       assert_equal :approved, instance.status
     end
 
     it "handles hash-based allow_if with non-symbol valid states" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status, :level
-
-        circulator :level do
-          state :basic do
-          end
-
-          state :advanced do
-          end
-
-          state "premium" do
-          end
-
-          state 99 do
-          end
-        end
-
-        circulator :status do
-          state :pending do
-            # Use symbols, strings, and integers in the valid_states array
-            action :process, to: :processed, allow_if: {level: [:advanced, "premium", 99]}
-          end
-        end
-      end
-
-      instance = klass.new
-      instance.status = :pending
-
       # Test with symbol level
-      instance.level = :advanced
+      instance = HashAllowIfNonSymbolValidStatesSampler.new(status: :pending, level: :advanced)
       instance.status_process
       assert_equal :processed, instance.status
 
       # Test with string level that's in valid_states
-      instance.status = :pending
-      instance.level = "premium"
+      instance = HashAllowIfNonSymbolValidStatesSampler.new(status: :pending, level: "premium")
       instance.status_process
       assert_equal :processed, instance.status
 
       # Test with integer level that's in valid_states (doesn't respond to to_sym)
-      instance.status = :pending
-      instance.level = 99
+      instance = HashAllowIfNonSymbolValidStatesSampler.new(status: :pending, level: 99)
       instance.status_process
       assert_equal :processed, instance.status
 
       # Test with level not in valid_states
-      instance.status = :pending
-      instance.level = :basic
+      instance = HashAllowIfNonSymbolValidStatesSampler.new(status: :pending, level: :basic)
       instance.status_process
       assert_equal :pending, instance.status
     end
 
     describe "available_flows" do
       it "returns actions available from current state" do
-        basic_class = Class.new do
-          extend Circulator
+        object = AvailableFlowsSampler.new(basic: :pending)
 
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-              action :reject, to: :rejected
-            end
-
-            state :approved do
-              action :archive, to: :archived
-            end
-
-            state :rejected
-            state :archived
-          end
-        end
-
-        object = basic_class.new
-        object.status = :pending
-
-        actions = object.available_flows(:status)
+        actions = object.available_flows(:basic)
         assert_equal [:approve, :reject].sort, actions.sort
       end
 
       it "returns empty array when no actions available" do
-        basic_class = Class.new do
-          extend Circulator
+        object = AvailableFlowsSampler.new(terminal: :approved)
 
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-            end
-
-            state :approved
-          end
-        end
-
-        object = basic_class.new
-        object.status = :approved
-
-        actions = object.available_flows(:status)
+        actions = object.available_flows(:terminal)
         assert_equal [], actions
       end
 
       it "returns empty array for undefined attribute" do
-        basic_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-            end
-          end
-        end
-
-        object = basic_class.new
-        object.status = :pending
+        object = AvailableFlowsSampler.new(simple: :pending)
 
         actions = object.available_flows(:nonexistent)
         assert_equal [], actions
       end
 
       it "respects proc-based allow_if conditions" do
-        conditional_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :ready
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: -> { ready }
-              action :reject, to: :rejected
-            end
-          end
-        end
-
-        object = conditional_class.new
-        object.status = :pending
+        object = AvailableFlowsGuardedSampler.new(conditional: :pending)
         object.ready = false
 
-        actions = object.available_flows(:status)
+        actions = object.available_flows(:conditional)
         assert_equal [:reject], actions
 
         object.ready = true
-        actions = object.available_flows(:status)
+        actions = object.available_flows(:conditional)
         assert_equal [:approve, :reject].sort, actions.sort
       end
 
       it "respects symbol-based allow_if conditions" do
-        symbol_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :ready
-
-          def ready?
-            ready
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: :ready?
-              action :reject, to: :rejected
-            end
-          end
-        end
-
-        object = symbol_class.new
-        object.status = :pending
+        object = AvailableFlowsGuardedSampler.new(symbolic: :pending)
         object.ready = false
 
-        actions = object.available_flows(:status)
+        actions = object.available_flows(:symbolic)
         assert_equal [:reject], actions
 
         object.ready = true
-        actions = object.available_flows(:status)
+        actions = object.available_flows(:symbolic)
         assert_equal [:approve, :reject].sort, actions.sort
       end
 
       it "respects hash-based allow_if conditions" do
-        hash_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :review_status
-
-          circulator :review_status do
-            state :pending do
-              action :approve_review, to: :approved
-            end
-
-            state :approved
-          end
-
-          circulator :status do
-            state :draft do
-              action :publish, to: :published, allow_if: {review_status: :approved}
-              action :submit, to: :submitted
-            end
-          end
-        end
-
-        object = hash_class.new
-        object.status = :draft
-        object.review_status = :pending
+        object = AvailableFlowsHashSampler.new(status: :draft, review_status: :pending)
 
         actions = object.available_flows(:status)
         assert_equal [:submit], actions
 
-        object.review_status = :approved
+        object = AvailableFlowsHashSampler.new(status: :draft, review_status: :approved)
         actions = object.available_flows(:status)
         assert_equal [:publish, :submit].sort, actions.sort
       end
 
       it "works with string attribute values" do
-        string_class = Class.new do
-          extend Circulator
+        object = AvailableFlowsSampler.new(simple: "pending")
 
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-            end
-          end
-        end
-
-        object = string_class.new
-        object.status = "pending"
-
-        actions = object.available_flows(:status)
+        actions = object.available_flows(:simple)
         assert_equal [:approve], actions
       end
 
       it "passes arguments to proc-based allow_if" do
-        args_class = Class.new do
-          extend Circulator
+        object = AvailableFlowsArgsSampler.new(proc_arg: :pending)
 
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: ->(min_level) { min_level >= 5 }
-              action :reject, to: :rejected
-            end
-          end
-        end
-
-        object = args_class.new
-        object.status = :pending
-
-        actions = object.available_flows(:status, 3)
+        actions = object.available_flows(:proc_arg, 3)
         assert_equal [:reject], actions
 
-        actions = object.available_flows(:status, 10)
+        actions = object.available_flows(:proc_arg, 10)
         assert_equal [:approve, :reject].sort, actions.sort
       end
 
       it "passes arguments to symbol-based allow_if" do
-        symbol_args_class = Class.new do
-          extend Circulator
+        object = AvailableFlowsArgsSampler.new(symbol_arg: :pending)
 
-          attr_accessor :status
-
-          def can_approve?(min_level)
-            min_level >= 5
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: :can_approve?
-              action :reject, to: :rejected
-            end
-          end
-        end
-
-        object = symbol_args_class.new
-        object.status = :pending
-
-        actions = object.available_flows(:status, 3)
+        actions = object.available_flows(:symbol_arg, 3)
         assert_equal [:reject], actions
 
-        actions = object.available_flows(:status, 10)
+        actions = object.available_flows(:symbol_arg, 10)
         assert_equal [:approve, :reject].sort, actions.sort
       end
 
       it "passes keyword arguments to allow_if" do
-        kwargs_class = Class.new do
-          extend Circulator
+        object = AvailableFlowsArgsSampler.new(kwargs_arg: :pending)
 
-          attr_accessor :status
-
-          def can_approve?(level:, priority:)
-            level >= 5 && priority == :high
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: :can_approve?
-              action :reject, to: :rejected
-            end
-          end
-        end
-
-        object = kwargs_class.new
-        object.status = :pending
-
-        actions = object.available_flows(:status, level: 10, priority: :low)
+        actions = object.available_flows(:kwargs_arg, level: 10, priority: :low)
         assert_equal [:reject], actions
 
-        actions = object.available_flows(:status, level: 10, priority: :high)
+        actions = object.available_flows(:kwargs_arg, level: 10, priority: :high)
         assert_equal [:approve, :reject].sort, actions.sort
       end
     end
 
     describe "available_flow?" do
       it "returns true when action is available" do
-        basic_class = Class.new do
-          extend Circulator
+        object = AvailableFlowsSampler.new(simple: :pending)
 
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-              action :reject, to: :rejected
-            end
-          end
-        end
-
-        object = basic_class.new
-        object.status = :pending
-
-        assert object.available_flow?(:status, :approve)
-        assert object.available_flow?(:status, :reject)
+        assert object.available_flow?(:simple, :approve)
       end
 
       it "returns false when action is not available" do
-        basic_class = Class.new do
-          extend Circulator
+        object = AvailableFlowsSampler.new(basic: :pending)
 
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-            end
-
-            state :approved do
-              action :archive, to: :archived
-            end
-          end
-        end
-
-        object = basic_class.new
-        object.status = :pending
-
-        assert object.available_flow?(:status, :approve)
-        refute object.available_flow?(:status, :archive)
+        assert object.available_flow?(:basic, :approve)
+        refute object.available_flow?(:basic, :archive)
       end
 
       it "returns false for undefined attribute" do
-        basic_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved
-            end
-          end
-        end
-
-        object = basic_class.new
-        object.status = :pending
+        object = AvailableFlowsSampler.new(simple: :pending)
 
         refute object.available_flow?(:nonexistent, :approve)
       end
 
       it "respects allow_if conditions" do
-        conditional_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :ready
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: -> { ready }
-              action :reject, to: :rejected
-            end
-          end
-        end
-
-        object = conditional_class.new
-        object.status = :pending
+        object = AvailableFlowsGuardedSampler.new(conditional: :pending)
         object.ready = false
 
-        refute object.available_flow?(:status, :approve)
-        assert object.available_flow?(:status, :reject)
+        refute object.available_flow?(:conditional, :approve)
+        assert object.available_flow?(:conditional, :reject)
 
         object.ready = true
-        assert object.available_flow?(:status, :approve)
-        assert object.available_flow?(:status, :reject)
+        assert object.available_flow?(:conditional, :approve)
+        assert object.available_flow?(:conditional, :reject)
       end
 
       it "passes arguments to allow_if" do
-        args_class = Class.new do
-          extend Circulator
+        object = AvailableFlowsArgsSampler.new(proc_arg: :pending)
 
-          attr_accessor :status
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: ->(min_level) { min_level >= 5 }
-            end
-          end
-        end
-
-        object = args_class.new
-        object.status = :pending
-
-        refute object.available_flow?(:status, :approve, 3)
-        assert object.available_flow?(:status, :approve, 10)
+        refute object.available_flow?(:proc_arg, :approve, 3)
+        assert object.available_flow?(:proc_arg, :approve, 10)
       end
 
       it "validates array allow_if with symbols" do
-        array_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :approved, :in_budget
-
-          def initialize
-            @approved = false
-            @in_budget = false
-          end
-
-          def approved?
-            @approved
-          end
-
-          def in_budget?
-            @in_budget
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: [:approved?, :in_budget?]
-            end
-          end
-        end
-
-        object = array_class.new
-        object.status = :pending
+        object = ArrayAllowIfSampler.new(status: :pending)
 
         # Both conditions false
         refute object.available_flow?(:status, :approve)
@@ -2643,76 +2015,23 @@ class CirculatorFlowTest < Minitest::Test
       end
 
       it "guards_for returns symbol guards from array allow_if" do
-        array_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          def approved?
-            true
-          end
-
-          def in_budget?
-            true
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: [:approved?, :in_budget?]
-            end
-          end
-        end
-
-        object = array_class.new
-        object.status = :pending
+        object = ArrayAllowIfSampler.new(status: :pending)
+        object.approved = true
+        object.in_budget = true
 
         guards = object.guards_for(:status, :approve)
         assert_equal [:approved?, :in_budget?], guards
       end
 
       it "guards_for returns nil for non-array allow_if" do
-        symbol_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          def can_approve?
-            true
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: :can_approve?
-            end
-          end
-        end
-
-        object = symbol_class.new
-        object.status = :pending
+        object = SymbolAllowIfSampler.new(status: :pending)
 
         # Symbol guards return nil
-        assert_nil object.guards_for(:status, :approve)
+        assert_nil object.guards_for(:status, :activate)
       end
 
       it "supports mixing symbols and procs in array allow_if" do
-        mixed_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :admin
-
-          def base_check?
-            true
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: [:base_check?, -> { @admin }]
-            end
-          end
-        end
-
-        object = mixed_class.new
-        object.status = :pending
+        object = MixedAllowIfCheckSampler.new(status: :pending)
         object.admin = false
 
         refute object.available_flow?(:status, :approve)
@@ -2722,48 +2041,14 @@ class CirculatorFlowTest < Minitest::Test
       end
 
       it "guards_for with mixed symbols and procs returns only symbols" do
-        mixed_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status
-
-          def check?
-            true
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: [:check?, -> { true }]
-            end
-          end
-        end
-
-        object = mixed_class.new
-        object.status = :pending
+        object = MixedAllowIfCheckSampler.new(status: :pending)
 
         guards = object.guards_for(:status, :approve)
         assert_equal [:check?], guards
       end
 
       it "executes transition when array allow_if with proc passes" do
-        mixed_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :admin
-
-          def check?
-            true
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: [:check?, -> { @admin }]
-            end
-          end
-        end
-
-        object = mixed_class.new
-        object.status = :pending
+        object = MixedAllowIfCheckSampler.new(status: :pending)
         object.admin = true
 
         object.status_approve
@@ -2771,24 +2056,7 @@ class CirculatorFlowTest < Minitest::Test
       end
 
       it "blocks transition when array allow_if with proc fails" do
-        mixed_class = Class.new do
-          extend Circulator
-
-          attr_accessor :status, :admin
-
-          def check?
-            true
-          end
-
-          circulator :status do
-            state :pending do
-              action :approve, to: :approved, allow_if: [:check?, -> { @admin }]
-            end
-          end
-        end
-
-        object = mixed_class.new
-        object.status = :pending
+        object = MixedAllowIfCheckSampler.new(status: :pending)
         object.admin = false
 
         object.status_approve
@@ -2799,13 +2067,7 @@ class CirculatorFlowTest < Minitest::Test
 
   describe "Flow#merge" do
     it "merges new actions into existing flow" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status
-      end
-
-      flow = Circulator::Flow.new(klass, :status) do
+      flow = Circulator::Flow.new(FlowMergeSampler, :status) do
         state :pending do
           action :approve, to: :approved
         end
@@ -2826,13 +2088,7 @@ class CirculatorFlowTest < Minitest::Test
     end
 
     it "merges new transitions into existing actions" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status
-      end
-
-      flow = Circulator::Flow.new(klass, :status) do
+      flow = Circulator::Flow.new(FlowMergeSampler, :status) do
         state :pending do
           action :cancel, to: :cancelled
         end
@@ -2854,13 +2110,7 @@ class CirculatorFlowTest < Minitest::Test
     end
 
     it "returns self for chaining" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status
-      end
-
-      flow = Circulator::Flow.new(klass, :status) do
+      flow = Circulator::Flow.new(FlowMergeSampler, :status) do
         state :pending do
           action :approve, to: :approved
         end
@@ -2876,13 +2126,7 @@ class CirculatorFlowTest < Minitest::Test
     end
 
     it "merges states into the flow" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status
-      end
-
-      flow = Circulator::Flow.new(klass, :status) do
+      flow = Circulator::Flow.new(FlowMergeSampler, :status) do
         state :pending do
           action :approve, to: :approved
         end
@@ -2902,13 +2146,7 @@ class CirculatorFlowTest < Minitest::Test
     end
 
     it "allows multiple merges" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status
-      end
-
-      flow = Circulator::Flow.new(klass, :status) do
+      flow = Circulator::Flow.new(FlowMergeSampler, :status) do
         state :draft do
           action :submit, to: :pending
         end
@@ -2932,13 +2170,7 @@ class CirculatorFlowTest < Minitest::Test
     end
 
     it "overwrites existing transitions when merging same action from same state" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status
-      end
-
-      flow = Circulator::Flow.new(klass, :status) do
+      flow = Circulator::Flow.new(FlowMergeSampler, :status) do
         state :pending do
           action :approve, to: :approved
         end
@@ -2957,17 +2189,7 @@ class CirculatorFlowTest < Minitest::Test
     end
 
     it "works with action blocks" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status, :counter
-
-        def initialize
-          @counter = 0
-        end
-      end
-
-      flow = Circulator::Flow.new(klass, :status) do
+      flow = Circulator::Flow.new(FlowMergeSampler, :status) do
         state :pending do
           action :approve, to: :approved
         end
@@ -2985,17 +2207,7 @@ class CirculatorFlowTest < Minitest::Test
     end
 
     it "works with allow_if conditions" do
-      klass = Class.new do
-        extend Circulator
-
-        attr_accessor :status
-
-        def admin?
-          true
-        end
-      end
-
-      flow = Circulator::Flow.new(klass, :status) do
+      flow = Circulator::Flow.new(FlowMergeSampler, :status) do
         state :pending do
           action :approve, to: :approved
         end
