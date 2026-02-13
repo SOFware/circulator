@@ -2,6 +2,8 @@ require "circulator/version"
 require "circulator/flow"
 
 module Circulator
+  class InvalidTransition < StandardError; end
+
   # Global registry for extensions
   @extensions = Hash.new { |h, k| h[k] = [] }
 
@@ -110,13 +112,18 @@ module Circulator
       # Define or redefine methods for actions (need to redefine if transitions changed)
       flow.transition_map.each do |action, transitions|
         method_name = [object, attribute_name, action].compact.join("_")
+        bang_method_name = "#{method_name}!"
 
-        # Remove existing method so it can be redefined with updated transitions
+        # Remove existing methods so they can be redefined with updated transitions
         if flow_module.method_defined?(method_name)
           flow_module.remove_method(method_name)
         end
+        if flow_module.method_defined?(bang_method_name)
+          flow_module.remove_method(bang_method_name)
+        end
 
         klass.send(:define_flow_method, attribute_name:, action:, transitions:, object:, owner: flow_module)
+        klass.send(:define_bang_flow_method, attribute_name:, action:, transitions:, object:, owner: flow_module)
       end
 
       # Define predicate methods for any new states
@@ -129,6 +136,7 @@ module Circulator
   end
 
   FLOW_MODULE_NAME = "FlowMethods"
+  FLOW_VARIANTS = {:bang => "!", nil => ""}.freeze
 
   # Declare a flow for an attribute.
   #
@@ -275,6 +283,11 @@ module Circulator
     # Pass the flows_proc to Flow so it can create transition_maps of the same type
     @flows[model_key][attribute_name] = Flow.new(self, attribute_name, flows_proc:, &block)
 
+    # Define InvalidTransition exception on the host class if not already defined
+    unless const_defined?(:InvalidTransition, false)
+      const_set(:InvalidTransition, Class.new(Circulator::InvalidTransition))
+    end
+
     flow_module = ancestors.find { |ancestor|
       ancestor.name.to_s =~ /#{FLOW_MODULE_NAME}/o
     } || Module.new.tap do |mod|
@@ -299,6 +312,7 @@ module Circulator
         end
       end
       define_flow_method(attribute_name:, action:, transitions:, object:, owner: flow_module)
+      define_bang_flow_method(attribute_name:, action:, transitions:, object:, owner: flow_module)
     end
 
     # Define predicate methods for each state (skip nil)
@@ -372,6 +386,30 @@ module Circulator
     end
   end
 
+  def define_bang_flow_method(attribute_name:, action:, transitions:, object:, owner:)
+    bang_method = [object, attribute_name, action].compact.join("_") << "!"
+    return if owner.method_defined?(bang_method)
+
+    non_bang_method = [object, attribute_name, action].compact.join("_")
+    owner.define_method(bang_method) do |*args, flow_target: self, **kwargs, &block|
+      current_value = flow_target.send(attribute_name)
+      current_state = current_value.respond_to?(:to_sym) ? current_value.to_sym : current_value
+
+      transition = transitions[current_state]
+      unless transition
+        raise self.class.const_get(:InvalidTransition),
+          "No transition #{action} on #{attribute_name} from #{current_state.inspect}"
+      end
+
+      if transition[:allow_if] && !Circulator.evaluate_guard(flow_target, transition[:allow_if], *args, **kwargs)
+        raise self.class.const_get(:InvalidTransition),
+          "Guard prevented #{action} on #{attribute_name} from #{current_state.inspect}"
+      end
+
+      send(non_bang_method, *args, flow_target:, **kwargs, &block)
+    end
+  end
+
   module_function def evaluate_guard(target, allow_if, *args, **kwargs)
     case allow_if
     when Array
@@ -418,16 +456,21 @@ module Circulator
   module InstanceMethods
     # Use this method to call an action on the attribute.
     #
+    # Accepts an optional +variant:+ keyword to select a method variant.
+    # See +FLOW_VARIANTS+ for the available variants and their suffixes.
+    #
     # Example:
     #
     #   test_object.flow(:approve, :status)
     #   test_object.flow(:approve, :status, "arg1", "arg2", key: "value")
-    def flow(action, attribute, *args, flow_target: self, **kwargs, &block)
+    #   test_object.flow(:approve, :status, variant: :bang)
+    def flow(action, attribute, *args, flow_target: self, variant: nil, **kwargs, &block)
       target_name = if flow_target != self
         Circulator.methodize_name(Circulator.model_key(flow_target))
       end
       external_attribute_name = [target_name, attribute].compact.join("_")
-      method_name = "#{external_attribute_name}_#{action}"
+      suffix = Circulator::FLOW_VARIANTS.fetch(variant)
+      method_name = "#{external_attribute_name}_#{action}#{suffix}"
       if respond_to?(method_name)
         send(method_name, *args, flow_target:, **kwargs, &block)
       elsif flow_target.respond_to?(method_name)
@@ -435,6 +478,17 @@ module Circulator
       else
         raise "Invalid action for the current state of #{attribute} (#{flow_target.send(attribute).inspect}): #{action}"
       end
+    rescue KeyError
+      raise ArgumentError, "Invalid variant: #{variant.inspect}"
+    end
+
+    # Bang variant of flow that raises InvalidTransition on failure.
+    #
+    # Example:
+    #
+    #   test_object.flow!(:approve, :status)
+    def flow!(action, attribute, *args, **kwargs, &block)
+      flow(action, attribute, *args, variant: :bang, **kwargs, &block)
     end
 
     # Get available actions for an attribute based on current state
