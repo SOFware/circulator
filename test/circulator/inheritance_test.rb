@@ -271,6 +271,96 @@ class CirculatorInheritanceTest < Minitest::Test
     end
   end
 
+  describe "early extension on subclass (registered before class exists)" do
+    it "early extension modifying existing transition works on first call" do
+      parent = Class.new do
+        extend Circulator
+
+        attr_accessor :status
+        def initialize(status: nil) = @status = status
+        def self.name = "EarlyModParent"
+
+        flow :status do
+          state :pending do
+            action :approve, to: :approved
+          end
+          state :approved
+        end
+      end
+
+      # Register extension that MODIFIES an existing transition
+      Circulator.extension(:EarlyModChild, :status) do
+        state :pending do
+          action :approve, to: :reviewed
+        end
+        state :reviewed
+      end
+
+      child = Class.new(parent) do
+        def self.name = "EarlyModChild"
+      end
+      Object.const_set(:EarlyModChild, child)
+
+      # The very first call on the first instance must use the extended transition
+      obj = child.new(status: :pending)
+      obj.status_approve
+      assert_equal :reviewed, obj.status
+
+      # Parent unaffected
+      parent_obj = parent.new(status: :pending)
+      parent_obj.status_approve
+      assert_equal :approved, parent_obj.status
+    ensure
+      Object.send(:remove_const, :EarlyModChild) if defined?(EarlyModChild)
+    end
+
+    it "applies pending extension when subclass is defined" do
+      parent = Class.new do
+        extend Circulator
+
+        attr_accessor :status
+        def initialize(status: nil) = @status = status
+        def self.name = "EarlyParent"
+
+        flow :status do
+          state :pending do
+            action :approve, to: :approved
+          end
+          state :approved
+        end
+      end
+
+      # Register extension BEFORE child class exists
+      Circulator.extension(:EarlyChild, :status) do
+        state :approved do
+          action :publish, to: :published
+        end
+        state :published
+      end
+
+      # Now define the child — the pending extension should be applied
+      child = Class.new(parent) do
+        def self.name = "EarlyChild"
+      end
+      Object.const_set(:EarlyChild, child)
+
+      obj = child.new(status: :pending)
+      assert obj.respond_to?(:status_approve)
+      obj.status_approve
+      assert_equal :approved, obj.status
+
+      assert obj.respond_to?(:status_publish)
+      obj.status_publish
+      assert_equal :published, obj.status
+
+      # Parent unaffected
+      parent_obj = parent.new(status: :approved)
+      refute parent_obj.respond_to?(:status_publish)
+    ensure
+      Object.send(:remove_const, :EarlyChild) if defined?(EarlyChild)
+    end
+  end
+
   describe "Flow#dup_for" do
     it "creates a copy with a different owning class" do
       parent = Class.new do

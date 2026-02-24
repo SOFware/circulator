@@ -125,7 +125,7 @@ module Circulator
       klass = begin
         Object.const_get(class_name.to_s)
       rescue NameError
-        return
+        return # Class doesn't exist yet
       end
 
       return unless klass.respond_to?(:flows)
@@ -185,6 +185,30 @@ module Circulator
       states.each do |state|
         next if state.nil?
         klass.send(:define_state_method, attribute_name:, state:, object:, owner: flow_module)
+      end
+    end
+
+    # Apply any pending extensions that were registered before the class existed.
+    #
+    # When Circulator.extension is called for a class that doesn't exist yet,
+    # the extension block is stored in the global registry. This method checks
+    # the registry for extensions matching the given class name and applies them.
+    #
+    # Called from the inherited hook when a subclass is defined, and also
+    # lazily from the flows accessor when the class name becomes available
+    # after class creation (e.g., after Object.const_set).
+    def apply_pending_extensions(klass)
+      class_name = klass.name
+      return unless class_name
+
+      Circulator.extensions.each_key do |key|
+        ext_class_name, ext_attribute = key.split(":", 2)
+        next unless ext_class_name == class_name
+
+        attribute_name = ext_attribute.to_sym
+        Circulator.extensions[key].each do |ext_block|
+          apply_extension_to_existing_flow(class_name, attribute_name, ext_block)
+        end
       end
     end
   end
@@ -417,10 +441,17 @@ module Circulator
       flow_logic = -> {
         current_value = flow_target.send(attribute_name)
 
+        # Look up transitions dynamically to support inherited+extended flows.
+        # The closure-captured `transitions` may be stale if an extension was
+        # applied after this method was defined (e.g., early extensions on subclasses).
+        # Fall back to the closure-captured transitions if the flow lookup fails.
+        live_flow = flows&.dig(Circulator.model_key(flow_target), attribute_name)
+        current_transitions = live_flow&.transition_map&.[](action) || transitions
+
         transition = if current_value.respond_to?(:to_sym)
-          transitions[current_value.to_sym]
+          current_transitions[current_value.to_sym]
         else
-          transitions[current_value]
+          current_transitions[current_value]
         end
 
         unless transition
@@ -460,7 +491,11 @@ module Circulator
       current_value = flow_target.send(attribute_name)
       current_state = current_value.respond_to?(:to_sym) ? current_value.to_sym : current_value
 
-      transition = transitions[current_state]
+      # Look up transitions dynamically (same rationale as define_flow_method)
+      live_flow = flows&.dig(Circulator.model_key(flow_target), attribute_name)
+      current_transitions = live_flow&.transition_map&.[](action) || transitions
+
+      transition = current_transitions[current_state]
       unless transition
         raise self.class.const_get(:InvalidTransition),
           "No transition #{action} on #{attribute_name} from #{current_state.inspect}"
@@ -526,7 +561,21 @@ module Circulator
     base.define_singleton_method(:inherited) do |subclass|
       super(subclass)
 
+      # Track whether pending extensions have been applied for this subclass.
+      # Since inherited fires before the class body block runs (and before
+      # Object.const_set assigns a name), we use lazy application: the first
+      # time flows is accessed on a named subclass, pending extensions are applied.
+      pending_extensions_applied = false
+
       subclass.define_singleton_method(:flows) do
+        # Lazily apply pending extensions once the class has a name
+        unless pending_extensions_applied
+          if name
+            pending_extensions_applied = true
+            Circulator.send(:apply_pending_extensions, self)
+          end
+        end
+
         @flows || ancestors.drop(1).lazy.filter_map { |a|
           a.instance_variable_get(:@flows) if a.respond_to?(:flows)
         }.first
