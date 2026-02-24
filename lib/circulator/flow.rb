@@ -219,6 +219,34 @@ module Circulator
       self
     end
 
+    # Create a deep copy of this flow for a different owning class.
+    # Used when a subclass needs its own copy of a parent's flow
+    # (e.g., when applying extensions to an inherited flow).
+    def dup_for(new_klass)
+      copy = self.class.allocate
+      copy.instance_variable_set(:@klass, new_klass)
+      copy.instance_variable_set(:@attribute_name, @attribute_name)
+      copy.instance_variable_set(:@states, @states.dup)
+      # Procs (@action_missing, @flows_proc, @around) are intentionally shared,
+      # not copied. They are stateless closures that work identically across
+      # parent and child classes.
+      copy.instance_variable_set(:@action_missing, @action_missing)
+      copy.instance_variable_set(:@flows_proc, @flows_proc)
+      copy.instance_variable_set(:@around, @around)
+
+      # Deep copy transition map: action => {from_state => {to:, block:, ...}}
+      new_map = @flows_proc.call
+      @transition_map.each do |action, transitions|
+        new_map[action] = @flows_proc.call
+        transitions.each do |from_state, data|
+          new_map[action][from_state] = data.dup
+        end
+      end
+      copy.instance_variable_set(:@transition_map, new_map)
+
+      copy
+    end
+
     private
 
     def validate_allow_if(allow_if)

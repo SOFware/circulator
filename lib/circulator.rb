@@ -79,33 +79,89 @@ module Circulator
 
     private
 
+    # Walk the ancestor chain of +klass+ to find a Flow for +attribute_name+.
+    # Each ancestor is checked under its own model key, since flows are stored
+    # under the declaring class's name.
+    #
+    # Returns the first matching Flow, or nil.
+    def find_inherited_flow(klass, attribute_name)
+      klass.ancestors.drop(1).lazy.filter_map { |a|
+        next unless a.respond_to?(:flows)
+        a_flows = a.instance_variable_get(:@flows)
+        next unless a_flows
+        a_key = Circulator.model_key(a.to_s)
+        a_flows.dig(a_key, attribute_name.to_sym)
+      }.first
+    end
+
+    # Ensure +klass+ has its own local copy of the flow for +attribute_name+.
+    #
+    # If the class already owns a local flow, returns it. Otherwise, looks up
+    # the ancestor chain, deep-copies the inherited flow, stores it on the
+    # child class, and returns the copy.
+    #
+    # Returns the local Flow, or nil if no flow exists anywhere in the chain.
+    def ensure_local_flow(klass, model_key, attribute_name)
+      local_flows = klass.instance_variable_get(:@flows)
+      existing = local_flows&.dig(model_key, attribute_name.to_sym)
+      return existing if existing
+
+      parent_flow = find_inherited_flow(klass, attribute_name)
+      return unless parent_flow
+
+      # Deep-copy parent flow for this subclass
+      copy = parent_flow.dup_for(klass)
+
+      # Store on the child class
+      flows_proc = copy.instance_variable_get(:@flows_proc) || Circulator.default_flow_proc
+      klass.instance_variable_set(:@flows, klass.instance_variable_get(:@flows) || flows_proc.call)
+      klass.instance_variable_get(:@flows)[model_key] ||= flows_proc.call
+      klass.instance_variable_get(:@flows)[model_key][attribute_name.to_sym] = copy
+
+      copy
+    end
+
     def apply_extension_to_existing_flow(class_name, attribute_name, block)
-      # Try to get the class constant
       klass = begin
         Object.const_get(class_name.to_s)
       rescue NameError
-        return # Class doesn't exist yet, extension will be applied when flow is defined
+        return # Class doesn't exist yet
       end
 
-      # Check if the class has flows and the specific attribute flow
-      return unless klass.respond_to?(:flows) && klass.flows
+      return unless klass.respond_to?(:flows)
 
       model_key = Circulator.model_key(klass.to_s)
-      existing_flow = klass.flows.dig(model_key, attribute_name.to_sym)
+      existing_flow = ensure_local_flow(klass, model_key, attribute_name)
       return unless existing_flow
 
-      # Merge the extension into the existing flow
+      # Merge the extension into the (possibly copied) flow
       existing_flow.merge(&block)
 
-      # Re-define flow methods for any new actions/states
+      # Re-define flow methods for new/changed actions
       redefine_flow_methods(klass, attribute_name, existing_flow)
     end
 
+    # Re-define flow action and state methods after an extension is merged.
+    #
+    # Side effect: if the FlowMethods module found in the ancestor chain
+    # belongs to a parent class, this method creates a new FlowMethods
+    # module on +klass+ so that the parent's methods are not mutated.
     def redefine_flow_methods(klass, attribute_name, flow)
+      # Find an existing FlowMethods module in the ancestor chain
       flow_module = klass.ancestors.find { |ancestor|
         ancestor.name.to_s =~ /#{FLOW_MODULE_NAME}/o
       }
       return unless flow_module
+
+      # If the FlowMethods module belongs to a parent class, create a new
+      # one on the child so we don't mutate the parent's methods.
+      if klass.const_defined?(FLOW_MODULE_NAME.to_sym, false)
+        flow_module = klass.const_get(FLOW_MODULE_NAME.to_sym, false)
+      else
+        flow_module = Module.new
+        klass.include flow_module
+        klass.const_set(FLOW_MODULE_NAME.to_sym, flow_module)
+      end
 
       object = nil # Extensions only work on the same class model
 
@@ -129,6 +185,30 @@ module Circulator
       states.each do |state|
         next if state.nil?
         klass.send(:define_state_method, attribute_name:, state:, object:, owner: flow_module)
+      end
+    end
+
+    # Apply any pending extensions that were registered before the class existed.
+    #
+    # When Circulator.extension is called for a class that doesn't exist yet,
+    # the extension block is stored in the global registry. This method checks
+    # the registry for extensions matching the given class name and applies them.
+    #
+    # Called from the inherited hook when a subclass is defined, and also
+    # lazily from the flows accessor when the class name becomes available
+    # after class creation (e.g., after Object.const_set).
+    def apply_pending_extensions(klass)
+      class_name = klass.name
+      return unless class_name
+
+      Circulator.extensions.each_key do |key|
+        ext_class_name, ext_attribute = key.split(":", 2)
+        next unless ext_class_name == class_name
+
+        attribute_name = ext_attribute.to_sym
+        Circulator.extensions[key].each do |ext_block|
+          apply_extension_to_existing_flow(class_name, attribute_name, ext_block)
+        end
       end
     end
   end
@@ -275,8 +355,18 @@ module Circulator
   #  # Will log the flow logic according to the with_logging block behavior
   #
   def flow(attribute_name, model: to_s, flows_proc: Circulator.default_flow_proc, &block)
-    @flows ||= flows_proc.call
     model_key = Circulator.model_key(model)
+
+    # Check if a parent class already defines this flow
+    parent_flow = Circulator.send(:find_inherited_flow, self, attribute_name)
+
+    if parent_flow
+      raise ArgumentError,
+        "#{self} inherits a :#{attribute_name} flow from a parent class. " \
+        "Use Circulator.extension(#{self}, :#{attribute_name}) to customize it."
+    end
+
+    @flows ||= flows_proc.call
     @flows[model_key] ||= flows_proc.call
     # Pass the flows_proc to Flow so it can create transition_maps of the same type
     @flows[model_key][attribute_name] = Flow.new(self, attribute_name, flows_proc:, &block)
@@ -351,10 +441,17 @@ module Circulator
       flow_logic = -> {
         current_value = flow_target.send(attribute_name)
 
+        # Look up transitions dynamically to support inherited+extended flows.
+        # The closure-captured `transitions` may be stale if an extension was
+        # applied after this method was defined (e.g., early extensions on subclasses).
+        # Fall back to the closure-captured transitions if the flow lookup fails.
+        live_flow = flows&.dig(Circulator.model_key(flow_target), attribute_name)
+        current_transitions = live_flow&.transition_map&.[](action) || transitions
+
         transition = if current_value.respond_to?(:to_sym)
-          transitions[current_value.to_sym]
+          current_transitions[current_value.to_sym]
         else
-          transitions[current_value]
+          current_transitions[current_value]
         end
 
         unless transition
@@ -394,7 +491,11 @@ module Circulator
       current_value = flow_target.send(attribute_name)
       current_state = current_value.respond_to?(:to_sym) ? current_value.to_sym : current_value
 
-      transition = transitions[current_state]
+      # Look up transitions dynamically (same rationale as define_flow_method)
+      live_flow = flows&.dig(Circulator.model_key(flow_target), attribute_name)
+      current_transitions = live_flow&.transition_map&.[](action) || transitions
+
+      transition = current_transitions[current_state]
       unless transition
         raise self.class.const_get(:InvalidTransition),
           "No transition #{action} on #{attribute_name} from #{current_state.inspect}"
@@ -449,7 +550,37 @@ module Circulator
 
   def self.extended(base)
     base.include(InstanceMethods)
-    base.singleton_class.attr_reader :flows
+
+    # Define flows method that walks ancestor chain
+    base.define_singleton_method(:flows) do
+      @flows || ancestors.drop(1).lazy.filter_map { |a|
+        a.instance_variable_get(:@flows) if a.respond_to?(:flows)
+      }.first
+    end
+
+    base.define_singleton_method(:inherited) do |subclass|
+      super(subclass)
+
+      # Track whether pending extensions have been applied for this subclass.
+      # Since inherited fires before the class body block runs (and before
+      # Object.const_set assigns a name), we use lazy application: the first
+      # time flows is accessed on a named subclass, pending extensions are applied.
+      pending_extensions_applied = false
+
+      subclass.define_singleton_method(:flows) do
+        # Lazily apply pending extensions once the class has a name
+        unless pending_extensions_applied
+          if name
+            pending_extensions_applied = true
+            Circulator.send(:apply_pending_extensions, self)
+          end
+        end
+
+        @flows || ancestors.drop(1).lazy.filter_map { |a|
+          a.instance_variable_get(:@flows) if a.respond_to?(:flows)
+        }.first
+      end
+    end
   end
 
   module InstanceMethods
@@ -568,8 +699,31 @@ module Circulator
 
     private
 
+    # Returns the class-level flows hash, aliasing the current instance's
+    # model_key to the parent's flow data when needed.
+    #
+    # Why aliasing is needed: flows are stored under the declaring class's
+    # model_key (e.g. "Parent"), but instance lookups use the instance's own
+    # class key (e.g. "Child"). When a subclass inherits flows without
+    # overriding them, there is no entry for the child's key. We add an alias
+    # entry so that dig(child_key, attribute) resolves correctly.
+    #
+    # The mutation is safe because the alias is idempotent (same value each
+    # time) and just adds a pointer to existing data.
     def flows
-      self.class.flows
+      raw_flows = self.class.flows
+      return nil unless raw_flows
+
+      my_key = Circulator.model_key(self)
+      return raw_flows if raw_flows.key?(my_key)
+
+      # Find the ancestor whose model_key matches a key in the flows hash
+      parent_key = raw_flows.keys.find { |k| raw_flows[k].is_a?(Hash) || raw_flows[k].respond_to?(:dig) }
+      return raw_flows unless parent_key
+
+      # Alias in place — avoids allocating a new Hash on every call.
+      raw_flows[my_key] = raw_flows[parent_key]
+      raw_flows
     end
 
     def check_allow_if(allow_if, *args, **kwargs)
