@@ -79,6 +79,21 @@ module Circulator
 
     private
 
+    # Walk the ancestor chain of +klass+ to find a Flow for +attribute_name+.
+    # Each ancestor is checked under its own model key, since flows are stored
+    # under the declaring class's name.
+    #
+    # Returns the first matching Flow, or nil.
+    def find_inherited_flow(klass, attribute_name)
+      klass.ancestors.drop(1).lazy.filter_map { |a|
+        next unless a.respond_to?(:flows)
+        a_flows = a.instance_variable_get(:@flows)
+        next unless a_flows
+        a_key = Circulator.model_key(a.to_s)
+        a_flows.dig(a_key, attribute_name.to_sym)
+      }.first
+    end
+
     def apply_extension_to_existing_flow(class_name, attribute_name, block)
       # Try to get the class constant
       klass = begin
@@ -275,8 +290,18 @@ module Circulator
   #  # Will log the flow logic according to the with_logging block behavior
   #
   def flow(attribute_name, model: to_s, flows_proc: Circulator.default_flow_proc, &block)
-    @flows ||= flows_proc.call
     model_key = Circulator.model_key(model)
+
+    # Check if a parent class already defines this flow
+    parent_flow = Circulator.send(:find_inherited_flow, self, attribute_name)
+
+    if parent_flow
+      raise ArgumentError,
+        "#{self} inherits a :#{attribute_name} flow from a parent class. " \
+        "Use Circulator.extension(#{self}, :#{attribute_name}) to customize it."
+    end
+
+    @flows ||= flows_proc.call
     @flows[model_key] ||= flows_proc.call
     # Pass the flows_proc to Flow so it can create transition_maps of the same type
     @flows[model_key][attribute_name] = Flow.new(self, attribute_name, flows_proc:, &block)

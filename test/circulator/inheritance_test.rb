@@ -108,6 +108,79 @@ class CirculatorInheritanceTest < Minitest::Test
     end
   end
 
+  describe "error on redeclaration" do
+    it "raises when subclass declares flow for same attribute as parent" do
+      parent = Class.new do
+        extend Circulator
+
+        attr_accessor :status
+        def initialize(status: nil) = @status = status
+        def self.name = "RedeclareParent"
+
+        flow :status do
+          state :pending do
+            action :approve, to: :approved
+          end
+          state :approved
+        end
+      end
+
+      error = assert_raises(ArgumentError) do
+        Class.new(parent) do
+          def self.name = "RedeclareChild"
+
+          flow :status do
+            state :draft do
+              action :submit, to: :pending
+            end
+          end
+        end
+      end
+
+      assert_match(/inherits.*:status.*flow/, error.message)
+      assert_match(/Circulator\.extension/, error.message)
+    end
+
+    it "allows subclass to declare flow for a different attribute" do
+      parent = Class.new do
+        extend Circulator
+
+        attr_accessor :status, :priority
+        def initialize(status: nil, priority: nil)
+          @status = status
+          @priority = priority
+        end
+
+        def self.name = "DiffAttrParent"
+
+        flow :status do
+          state :pending do
+            action :approve, to: :approved
+          end
+          state :approved
+        end
+      end
+
+      # Should NOT raise
+      child = Class.new(parent) do
+        def self.name = "DiffAttrChild"
+
+        flow :priority do
+          state :low do
+            action :escalate, to: :high
+          end
+          state :high
+        end
+      end
+
+      obj = child.new(status: :pending, priority: :low)
+      obj.status_approve
+      assert_equal :approved, obj.status
+      obj.priority_escalate
+      assert_equal :high, obj.priority
+    end
+  end
+
   describe "Flow#dup_for" do
     it "creates a copy with a different owning class" do
       parent = Class.new do
