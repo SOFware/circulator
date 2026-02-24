@@ -1,5 +1,5 @@
 # frozen_string_literal: true
 
 module Circulator
-  VERSION = "2.1.14"
+  VERSION = "3.0.1"
 end
