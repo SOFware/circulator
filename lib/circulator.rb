@@ -449,7 +449,23 @@ module Circulator
 
   def self.extended(base)
     base.include(InstanceMethods)
-    base.singleton_class.attr_reader :flows
+
+    # Define flows method that walks ancestor chain
+    base.define_singleton_method(:flows) do
+      @flows || ancestors.drop(1).lazy.filter_map { |a|
+        a.instance_variable_get(:@flows) if a.respond_to?(:flows)
+      }.first
+    end
+
+    base.define_singleton_method(:inherited) do |subclass|
+      super(subclass)
+
+      subclass.define_singleton_method(:flows) do
+        @flows || ancestors.drop(1).lazy.filter_map { |a|
+          a.instance_variable_get(:@flows) if a.respond_to?(:flows)
+        }.first
+      end
+    end
   end
 
   module InstanceMethods
@@ -568,8 +584,31 @@ module Circulator
 
     private
 
+    # Returns the class-level flows hash, aliasing the current instance's
+    # model_key to the parent's flow data when needed.
+    #
+    # Why aliasing is needed: flows are stored under the declaring class's
+    # model_key (e.g. "Parent"), but instance lookups use the instance's own
+    # class key (e.g. "Child"). When a subclass inherits flows without
+    # overriding them, there is no entry for the child's key. We add an alias
+    # entry so that dig(child_key, attribute) resolves correctly.
+    #
+    # The mutation is safe because the alias is idempotent (same value each
+    # time) and just adds a pointer to existing data.
     def flows
-      self.class.flows
+      raw_flows = self.class.flows
+      return nil unless raw_flows
+
+      my_key = Circulator.model_key(self)
+      return raw_flows if raw_flows.key?(my_key)
+
+      # Find the ancestor whose model_key matches a key in the flows hash
+      parent_key = raw_flows.keys.find { |k| raw_flows[k].is_a?(Hash) || raw_flows[k].respond_to?(:dig) }
+      return raw_flows unless parent_key
+
+      # Alias in place — avoids allocating a new Hash on every call.
+      raw_flows[my_key] = raw_flows[parent_key]
+      raw_flows
     end
 
     def check_allow_if(allow_if, *args, **kwargs)
