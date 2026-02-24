@@ -94,33 +94,74 @@ module Circulator
       }.first
     end
 
+    # Ensure +klass+ has its own local copy of the flow for +attribute_name+.
+    #
+    # If the class already owns a local flow, returns it. Otherwise, looks up
+    # the ancestor chain, deep-copies the inherited flow, stores it on the
+    # child class, and returns the copy.
+    #
+    # Returns the local Flow, or nil if no flow exists anywhere in the chain.
+    def ensure_local_flow(klass, model_key, attribute_name)
+      local_flows = klass.instance_variable_get(:@flows)
+      existing = local_flows&.dig(model_key, attribute_name.to_sym)
+      return existing if existing
+
+      parent_flow = find_inherited_flow(klass, attribute_name)
+      return unless parent_flow
+
+      # Deep-copy parent flow for this subclass
+      copy = parent_flow.dup_for(klass)
+
+      # Store on the child class
+      flows_proc = copy.instance_variable_get(:@flows_proc) || Circulator.default_flow_proc
+      klass.instance_variable_set(:@flows, klass.instance_variable_get(:@flows) || flows_proc.call)
+      klass.instance_variable_get(:@flows)[model_key] ||= flows_proc.call
+      klass.instance_variable_get(:@flows)[model_key][attribute_name.to_sym] = copy
+
+      copy
+    end
+
     def apply_extension_to_existing_flow(class_name, attribute_name, block)
-      # Try to get the class constant
       klass = begin
         Object.const_get(class_name.to_s)
       rescue NameError
-        return # Class doesn't exist yet, extension will be applied when flow is defined
+        return
       end
 
-      # Check if the class has flows and the specific attribute flow
-      return unless klass.respond_to?(:flows) && klass.flows
+      return unless klass.respond_to?(:flows)
 
       model_key = Circulator.model_key(klass.to_s)
-      existing_flow = klass.flows.dig(model_key, attribute_name.to_sym)
+      existing_flow = ensure_local_flow(klass, model_key, attribute_name)
       return unless existing_flow
 
-      # Merge the extension into the existing flow
+      # Merge the extension into the (possibly copied) flow
       existing_flow.merge(&block)
 
-      # Re-define flow methods for any new actions/states
+      # Re-define flow methods for new/changed actions
       redefine_flow_methods(klass, attribute_name, existing_flow)
     end
 
+    # Re-define flow action and state methods after an extension is merged.
+    #
+    # Side effect: if the FlowMethods module found in the ancestor chain
+    # belongs to a parent class, this method creates a new FlowMethods
+    # module on +klass+ so that the parent's methods are not mutated.
     def redefine_flow_methods(klass, attribute_name, flow)
+      # Find an existing FlowMethods module in the ancestor chain
       flow_module = klass.ancestors.find { |ancestor|
         ancestor.name.to_s =~ /#{FLOW_MODULE_NAME}/o
       }
       return unless flow_module
+
+      # If the FlowMethods module belongs to a parent class, create a new
+      # one on the child so we don't mutate the parent's methods.
+      if klass.const_defined?(FLOW_MODULE_NAME.to_sym, false)
+        flow_module = klass.const_get(FLOW_MODULE_NAME.to_sym, false)
+      else
+        flow_module = Module.new
+        klass.include flow_module
+        klass.const_set(FLOW_MODULE_NAME.to_sym, flow_module)
+      end
 
       object = nil # Extensions only work on the same class model
 

@@ -181,6 +181,96 @@ class CirculatorInheritanceTest < Minitest::Test
     end
   end
 
+  describe "extension on subclass" do
+    it "copies parent flow and applies extension" do
+      parent = Class.new do
+        extend Circulator
+
+        attr_accessor :status
+        def initialize(status: nil) = @status = status
+        def self.name = "ExtParent"
+
+        flow :status do
+          state :pending do
+            action :approve, to: :approved
+          end
+          state :approved
+        end
+      end
+
+      child = Class.new(parent) do
+        def self.name = "ExtChild"
+      end
+      Object.const_set(:ExtChild, child)
+
+      Circulator.extension(:ExtChild, :status) do
+        state :pending do
+          action :reject, to: :rejected
+        end
+        state :rejected
+      end
+
+      obj = child.new(status: :pending)
+
+      # Should have parent's action
+      assert obj.respond_to?(:status_approve)
+
+      # Should have extension's action
+      assert obj.respond_to?(:status_reject)
+
+      # Parent should NOT have the extension's action
+      parent_obj = parent.new(status: :pending)
+      refute parent_obj.respond_to?(:status_reject)
+
+      # Extension action works
+      obj.status_reject
+      assert_equal :rejected, obj.status
+    ensure
+      Object.send(:remove_const, :ExtChild) if defined?(ExtChild)
+    end
+
+    it "extension can modify existing transitions from parent" do
+      parent = Class.new do
+        extend Circulator
+
+        attr_accessor :status
+        def initialize(status: nil) = @status = status
+        def self.name = "ModParent"
+
+        flow :status do
+          state :pending do
+            action :approve, to: :approved
+          end
+          state :approved
+        end
+      end
+
+      child = Class.new(parent) do
+        def self.name = "ModChild"
+      end
+      Object.const_set(:ModChild, child)
+
+      # Override approve to go to a different state
+      Circulator.extension(:ModChild, :status) do
+        state :pending do
+          action :approve, to: :reviewed
+        end
+        state :reviewed
+      end
+
+      child_obj = child.new(status: :pending)
+      child_obj.status_approve
+      assert_equal :reviewed, child_obj.status
+
+      # Parent is unaffected
+      parent_obj = parent.new(status: :pending)
+      parent_obj.status_approve
+      assert_equal :approved, parent_obj.status
+    ensure
+      Object.send(:remove_const, :ModChild) if defined?(ModChild)
+    end
+  end
+
   describe "Flow#dup_for" do
     it "creates a copy with a different owning class" do
       parent = Class.new do
@@ -263,6 +353,54 @@ class CirculatorInheritanceTest < Minitest::Test
       obj = klass.new(status: :draft)
       obj.status_publish
       assert_equal :published, obj.status
+    end
+
+    it "sibling subclasses with different extensions don't interfere" do
+      parent = Class.new do
+        extend Circulator
+
+        attr_accessor :status
+        def initialize(status: nil) = @status = status
+        def self.name = "SibParent"
+
+        flow :status do
+          state :pending do
+            action :approve, to: :approved
+          end
+          state :approved
+        end
+      end
+
+      child_a = Class.new(parent) { def self.name = "SibChildA" }
+      Object.const_set(:SibChildA, child_a)
+
+      child_b = Class.new(parent) { def self.name = "SibChildB" }
+      Object.const_set(:SibChildB, child_b)
+
+      Circulator.extension(:SibChildA, :status) do
+        state :pending do
+          action :fast_track, to: :approved
+        end
+      end
+
+      Circulator.extension(:SibChildB, :status) do
+        state :pending do
+          action :reject, to: :rejected
+        end
+        state :rejected
+      end
+
+      a = child_a.new(status: :pending)
+      b = child_b.new(status: :pending)
+
+      assert a.respond_to?(:status_fast_track)
+      refute a.respond_to?(:status_reject)
+
+      assert b.respond_to?(:status_reject)
+      refute b.respond_to?(:status_fast_track)
+    ensure
+      Object.send(:remove_const, :SibChildA) if defined?(SibChildA)
+      Object.send(:remove_const, :SibChildB) if defined?(SibChildB)
     end
   end
 
