@@ -338,9 +338,10 @@ class CirculatorCoverageTest < Minitest::Test
         # This tests line 231 - the error case
         sampler = Sampler.new(status: :pending)
 
-        assert_raises(RuntimeError, /Invalid action/) do
+        error = assert_raises(RuntimeError) do
           sampler.flow(:nonexistent_action, :status)
         end
+        assert_match(/Invalid action/, error.message)
       end
 
       it "accesses private flows method" do
@@ -358,9 +359,10 @@ class CirculatorCoverageTest < Minitest::Test
         flow_object = InvalidActionFlowSampler.new(status: :pending)
 
         # This action doesn't exist for pending state
-        assert_raises(RuntimeError, /Invalid action/) do
+        error = assert_raises(RuntimeError) do
           flow_object.flow(:nonexistent, :status)
         end
+        assert_match(/Invalid action/, error.message)
       end
     end
 
